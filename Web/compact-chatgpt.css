@@ -1,0 +1,18 @@
+/*
+  Conservative UI-only compact mode.
+  Avoid generated class names and do not touch conversation output.
+*/
+
+@media (min-width: 1px) {
+  aside {
+    display: none !important;
+  }
+
+  body {
+    overflow-x: hidden !important;
+  }
+
+  main {
+    max-width: 100% !important;
+  }
+}

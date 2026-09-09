@@ -1,0 +1,30 @@
+# .NET build output
+bin/
+obj/
+artifacts/
+TestResults/
+
+# Visual Studio local state
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Other IDE and editor-local files
+.vscode/
+.idea/
+*.DotSettings.user
+
+# Generated packages, logs, and temporary files
+packages/
+*.nupkg
+*.snupkg
+*.log
+*.tmp
+*.temp
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,29 @@
+<Window x:Class="PetGPT.Windows.PetWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="150"
+        Height="150"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True">
+    <Grid Background="Transparent">
+        <Image x:Name="PetImage"
+               Source="/Assets/pet-placeholder.png"
+               Stretch="Uniform"
+               Cursor="Hand"
+               ToolTip="Click to open ChatGPT">
+            <Image.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Open / Hide ChatGPT"
+                              Click="OnToggleChatMenuItemClick"/>
+                    <Separator/>
+                    <MenuItem Header="Exit PetGPT"
+                              Click="OnExitMenuItemClick"/>
+                </ContextMenu>
+            </Image.ContextMenu>
+        </Image>
+    </Grid>
+</Window>

@@ -49,24 +49,28 @@ repository build blocker was identified.
   step intentionally initialized or modified the WebView2 profile.
 - Never commit credentials, cookies, tokens, browser storage, or profile data.
 
-## Manual GUI checklist
+## User-reported manual GUI follow-up
 
-Native GUI automation was unavailable for T0. A user must complete and record
-these checks on the intended Windows displays:
+After the automated T0 run, the user completed the requested Windows smoke
+test and reported all supplied checks passing:
 
-- [ ] Static pet is visible and rendered correctly.
-- [ ] Drag moves the pet without triggering a click action.
-- [ ] Click opens the chat bubble.
-- [ ] A second click hides it, and a later click reopens it.
-- [ ] ChatGPT loads and existing login/session behavior works normally.
-- [ ] Close button hides the bubble without terminating PetGPT.
-- [ ] Escape hides the bubble when focus permits it.
-- [ ] Reload works without breaking the native ChatGPT UI.
-- [ ] Browser button opens `https://chatgpt.com/` in the default browser.
-- [ ] Bubble resizing works and the chosen size survives the expected save path.
-- [ ] Right-click Open/Hide ChatGPT works.
-- [ ] Context-menu Exit closes the bubble and terminates the process.
-- [ ] Positioning remains usable at every connected monitor scale.
+| Check | Result |
+|---|---|
+| Pet appears | Pass |
+| Dragging works without visible jitter | Pass |
+| Click opens ChatGPT | Pass |
+| Second click or Close hides the chat window | Pass |
+| Reopening preserves the same WebView session | Pass |
+| A message can be sent and a response received | Pass |
+| Reload works | Pass |
+| Open in browser works | Pass |
+| Context-menu Exit PetGPT fully terminates the process | Pass |
+| Resizing the chat window does not break it | Pass |
+
+This was user-operated validation, not Codex GUI automation. The supplied run
+did not establish multi-monitor/DPI behavior. It also did not separately report
+Escape-to-hide, right-click Open/Hide, or persistence of the resized dimensions
+across a process restart; no claim is made for those extra checks.
 
 ## Historical evidence
 

@@ -454,7 +454,7 @@ The activation message includes a short copy of the essential delivery and marke
 1. Selecting a pet changes its assets, theme, tray icon, and **intended** persona; it cancels reactions from the previous selection.
 2. `PersonaSession` creates a random 16-character lowercase hexadecimal epoch for this activation. The epoch is a correlation value, not a secret.
 3. Show a native status action, **Apply character to this chat**, with the assembled context available for review.
-4. After that action, stage only PetGPT's own context into an empty native ChatGPT composer. Never overwrite or read back a nonempty draft. If staging is unsupported or the composer is busy, provide Copy context instead. The user submits through ChatGPT's normal Send control.
+4. After that action, stage only PetGPT's own context when a privacy-safe structural capability has proved the native ChatGPT composer is empty. Never overwrite or read back a nonempty draft. T1 did not establish safe empty detection for the tested `div#prompt-textarea[role="textbox"]`; until a later gate passes, provide Copy context instead. The user submits through ChatGPT's normal Send control.
 5. Observe only the native submit event and structural appearance of the new turn. A valid reaction carrying the current epoch establishes **ProtocolObserved**. It does not prove the model perfectly embodies the persona.
 6. Continue normal conversation. Context is resent on explicit activation, pet/persona change, or a new/unknown chat, not before every message.
 
@@ -500,7 +500,9 @@ A marker is eligible only after a locally observed native send or regenerate eve
 
 ### Why not the simpler bracket marker?
 
-`[[PET:REACTION:...]]` is easier to type but requires inspecting text nodes and handling text split/rewrite boundaries. The href transport gives a narrower privacy boundary. First test whether ChatGPT preserves this exact Markdown link as an anchor. **No automatic text-scanning fallback** is part of v1; an alternative transport requires an explicit contract revision after the feasibility result.
+`[[PET:REACTION:...]]` is easier to type but requires inspecting text nodes and handling text split/rewrite boundaries. The href transport gives a narrower privacy boundary. **No automatic text-scanning fallback** is part of v1; an alternative transport requires an explicit contract revision after the feasibility result.
+
+T1 live verification on PetGPT WebView2 / Edge 153 confirmed exact href preservation for short, long/streaming, regenerated, and second-intensity marker responses. It also confirmed structural assistant ownership and opaque message IDs on that tested version. This is compatibility evidence, not a supported ChatGPT DOM API; the adapter must retain capability gates and fail closed when those assumptions change.
 
 ## 9. Animation state machine
 
@@ -560,9 +562,11 @@ No fetch/XHR interception, network response-body capture, React internal-state a
 
 ### Page adapter
 
-Only app-bundled JavaScript runs. Guard `window.top === window` and exact `location.origin === https://chatgpt.com`. Use a tested semantic/data selector for assistant ownership; `[data-message-author-role="assistant"]` is a candidate to verify, not a documented website contract. Exclude `pre`, `code`, blockquotes, user messages, tool content, and hidden answer branches.
+Only app-bundled JavaScript runs. Guard `window.top === window` and exact `location.origin === https://chatgpt.com`. T1 confirmed `[data-message-author-role="assistant"]` and distinct `data-message-id` values on the tested Edge/WebView2 153 surface; they remain adapter assumptions, not documented website contracts. Exclude `pre`, `code`, blockquotes, user messages, tool content, and hidden answer branches.
 
 A `MutationObserver` watches added elements and changes to `href`/the small structural attribute allowlist. **Do not observe `characterData`** or read arbitrary text. Query only the reserved-anchor selector within new eligible assistant subtrees. One idempotent observer attaches per document; disconnect on teardown. Coalesce changes and enforce bounded batches; if a storm exceeds the queue limit, mark the feature unavailable rather than accumulating unlimited work.
+
+T1 observed that a marker anchor can appear before it has an assistant owner during DOM construction. Never dispatch from the first raw anchor appearance. Require the complete href to stabilize, then re-resolve the anchor and revalidate its assistant owner, opaque message ID, baseline status, current document/route, and local generation correlation before emitting an event.
 
 Initial DOM enumeration builds structural baselines; it never dispatches historical reactions. A separate narrow root observer handles root replacement, and route events come from WebView2 `SourceChanged` plus an app-owned `popstate` listener. If SPA updates are not observed reliably, the capability gate fails; do not monkey-patch network APIs or continuously scan the whole page.
 
@@ -606,13 +610,15 @@ Configuration accepts an absolute HTTPS URL whose canonical host is exactly `cha
 |---|---|
 | First open after startup | Navigate to configured home, or `https://chatgpt.com/` if unconfigured |
 | Show/Hide | Preserve the existing page and draft; no home navigation |
-| New PetChat | Go to the configured project landing page and focus/use its verified native new-chat entry point; never use a global new-chat shortcut or fabricated URL |
+| New PetChat | Navigate directly to the configured project landing page and wait for the user's normal native submission to create the project conversation; never use the global New chat control or a fabricated URL |
 | History | Go to the same project home in history layout, exposing the native chat list; no custom database |
 | Home unavailable | Show native website error and Settings/Open ChatGPT fallback; do not silently create a project or claim the next chat is in PetChats |
 | Unconfigured home | Root chat/history remains available; show “PetChats not configured” |
 | Open in browser | Open the validated current ChatGPT URL when available, otherwise home; the external browser has its own session |
 
-If a one-click project new-chat control cannot be identified reliably, New PetChat lands on the project page and the user uses the native **New chat** action there. That is the explicit fallback, not a claim that a conversation has already been created. A nonempty draft or confirmed generation produces a native leave/stay prompt before New/History navigation; this concerns user data loss, not routine pet selection. Empty status can be observed without copying draft text.
+T1 confirmed that the ordinary native/global **New chat** control leaves PetChats and navigates to `https://chatgpt.com/`; it is not an acceptable project fallback. New PetChat always lands on the configured project page. The user submits normally from that landing surface, and only the resulting transition to the project conversation route establishes that a new PetChat exists.
+
+A nonempty draft or confirmed generation should produce a native leave/stay prompt before New/History navigation; this concerns user data loss, not routine pet selection. Because T1 did not establish a privacy-safe structural empty signal for the current composer, later implementation must gate any empty-dependent optimization and otherwise prompt conservatively. It must not read draft text.
 
 Compact mode is temporarily relaxed in History and on project landing pages. Returning to a conversation restores the user's chosen layout. Do not scrape the sidebar to discover PetChats, auto-create it, enumerate its conversations, or use undocumented backend endpoints.
 

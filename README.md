@@ -35,7 +35,9 @@ Edit:
 - `Web/compact-chatgpt.js`
 
 ## Known limitations
-- Scaffold has not yet been built or run on Windows.
+- The T0 baseline restore, build, and process-launch checks passed on Windows 11;
+  interactive GUI behavior still requires manual verification. See
+  `docs/validation/windows-smoke.md` for the exact evidence and checklist.
 - Positioning is not yet per-monitor/DPI aware.
 - Bubble visuals are intentionally basic.
 - ChatGPT frontend changes may require compact-mode updates.

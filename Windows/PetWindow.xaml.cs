@@ -10,21 +10,30 @@ public partial class PetWindow : Window
 {
     private readonly SettingsService _settingsService;
     private readonly AppSettings _settings;
-    private ChatBubbleWindow? _bubble;
+    private readonly Action _toggleChatRequested;
+    private readonly Action _exitRequested;
+    private readonly Action<IReadOnlyList<MonitorInfo>> _bubbleRepositionRequested;
     private IReadOnlyList<MonitorInfo> _monitors = [];
     private ScreenPointPx _dragPointerStartPx;
     private ScreenRectPx _dragWindowStartPx;
     private bool _dragging;
     private bool _geometryReady;
-    private bool _isExiting;
     private bool _allowClose;
 
-    public PetWindow(SettingsService settingsService)
+    public PetWindow(
+        SettingsService settingsService,
+        AppSettings settings,
+        Action toggleChatRequested,
+        Action exitRequested,
+        Action<IReadOnlyList<MonitorInfo>> bubbleRepositionRequested)
     {
         InitializeComponent();
 
         _settingsService = settingsService;
-        _settings = _settingsService.Load().Settings;
+        _settings = settings;
+        _toggleChatRequested = toggleChatRequested;
+        _exitRequested = exitRequested;
+        _bubbleRepositionRequested = bubbleRepositionRequested;
 
         Loaded += OnLoaded;
         LocationChanged += OnLocationChanged;
@@ -37,6 +46,8 @@ public partial class PetWindow : Window
         PetImage.MouseLeftButtonUp += OnPetMouseUp;
         PetImage.LostMouseCapture += OnPetLostMouseCapture;
     }
+
+    public IReadOnlyList<MonitorInfo> CurrentMonitors => _monitors;
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -59,15 +70,18 @@ public partial class PetWindow : Window
 
     private void OnPetMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (!_geometryReady)
+            return;
+
         _dragging = false;
         _dragPointerStartPx = WindowPositionService.GetCursorPositionPx();
         _dragWindowStartPx = WindowPositionService.GetWindowRectPx(this);
         PetImage.CaptureMouse();
     }
 
-    private void OnPetMouseMove(object sender, MouseEventArgs e)
+    private void OnPetMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (e.LeftButton != MouseButtonState.Pressed || !PetImage.IsMouseCaptured)
+        if (!_geometryReady || e.LeftButton != MouseButtonState.Pressed || !PetImage.IsMouseCaptured)
             return;
 
         var current = WindowPositionService.GetCursorPositionPx();
@@ -83,7 +97,7 @@ public partial class PetWindow : Window
             _dragPointerStartPx,
             current);
         WindowPositionService.MoveWindowToScreenRect(this, moved);
-        RepositionBubble();
+        _bubbleRepositionRequested(_monitors);
     }
 
     private async void OnPetMouseUp(object sender, MouseButtonEventArgs e)
@@ -92,8 +106,11 @@ public partial class PetWindow : Window
         _dragging = false;
         PetImage.ReleaseMouseCapture();
 
+        if (!_geometryReady)
+            return;
+
         if (!completedDrag)
-            ToggleBubble();
+            _toggleChatRequested();
 
         if (completedDrag)
         {
@@ -104,9 +121,9 @@ public partial class PetWindow : Window
         }
     }
 
-    private async void OnPetLostMouseCapture(object sender, MouseEventArgs e)
+    private async void OnPetLostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (!_dragging)
+        if (!_geometryReady || !_dragging)
             return;
 
         _dragging = false;
@@ -118,26 +135,12 @@ public partial class PetWindow : Window
 
     private void OnToggleChatMenuItemClick(object sender, RoutedEventArgs e)
     {
-        ToggleBubble();
+        _toggleChatRequested();
     }
 
-    private async void OnExitMenuItemClick(object sender, RoutedEventArgs e)
+    private void OnExitMenuItemClick(object sender, RoutedEventArgs e)
     {
-        await ExitApplicationAsync();
-    }
-
-    private void ToggleBubble()
-    {
-        if (_bubble is { IsVisible: true })
-        {
-            _bubble.Hide();
-            return;
-        }
-
-        _bubble ??= new ChatBubbleWindow(_settings, _settingsService, this);
-        _bubble.PreparePlacement(_monitors);
-        _bubble.Show();
-        _bubble.Activate();
+        _exitRequested();
     }
 
     private void OnLocationChanged(object? sender, EventArgs e)
@@ -146,13 +149,8 @@ public partial class PetWindow : Window
             return;
 
         PersistPetPlacement();
-        RepositionBubble();
-    }
-
-    private void RepositionBubble()
-    {
-        if (_bubble is { IsVisible: true } && _settings.ChatWindow.PlacementMode == "FollowPet")
-            _bubble.PreparePlacement(_monitors);
+        if (_settings.ChatWindow.PlacementMode == "FollowPet")
+            _bubbleRepositionRequested(_monitors);
     }
 
     private void PersistPetPlacement()
@@ -175,7 +173,8 @@ public partial class PetWindow : Window
             QueueDisplayGeometryRefresh();
     }
 
-    private void OnDpiChanged(object sender, DpiChangedEventArgs e) => QueueDisplayGeometryRefresh();
+    private void OnDpiChanged(object sender, System.Windows.DpiChangedEventArgs e) =>
+        QueueDisplayGeometryRefresh();
 
     private void QueueDisplayGeometryRefresh()
     {
@@ -199,8 +198,7 @@ public partial class PetWindow : Window
             WindowPositionService.ClampWindowToAvailableWorkArea(this, _monitors);
             PersistPetPlacement();
 
-            if (_bubble is { IsVisible: true })
-                _bubble.RefreshDisplayGeometry(_monitors);
+            _bubbleRepositionRequested(_monitors);
         }
         catch
         {
@@ -208,29 +206,25 @@ public partial class PetWindow : Window
         }
     }
 
-    private async Task ExitApplicationAsync()
+    public void CloseForAppShutdown()
     {
-        if (_isExiting)
-            return;
-
-        _isExiting = true;
-
-        PersistPetPlacement();
-        await _settingsService.FlushAsync(CancellationToken.None);
-
         _allowClose = true;
-        _bubble?.CloseForAppShutdown();
         Close();
     }
 
-    private async void OnPetWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    public void BeginAppShutdown()
+    {
+        PersistPetPlacement();
+        _geometryReady = false;
+    }
+
+    private void OnPetWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (_allowClose)
             return;
 
         e.Cancel = true;
-        if (!_isExiting)
-            await ExitApplicationAsync();
+        _exitRequested();
     }
 
     private void OnPetWindowClosed(object? sender, EventArgs e)

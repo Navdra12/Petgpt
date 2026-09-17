@@ -168,3 +168,69 @@ taskbar movement remain explicitly unverified on hardware.
 
 Detailed unit and placement behavior is in
 [`docs/contracts/window-geometry.md`](contracts/window-geometry.md).
+
+## T4 application lifetime and tray — 2026-09-17
+
+T4 changes WPF to `OnExplicitShutdown` and makes `AppLifetime` the single owner
+of `SettingsService`, the pet and persistent chat windows, `TrayService`, the
+single-instance guard, and application Exit. `PetWindow` now emits narrow
+toggle, geometry, and Exit intents; it no longer constructs or closes the chat
+bubble. Pet click, the pet context menu, chat error UI, and the tray all route
+through the same lifetime owner.
+
+The app acquires a stable user-scoped named mutex before creating settings,
+windows, tray, or WebView resources. The name uses the global Windows object
+namespace plus a SHA-256 digest of the current Windows user SID, so another
+session for the same user is excluded without blocking a different user.
+Abandoned ownership is accepted normally, and the guard is released during
+ordered shutdown. A second launch reports that PetGPT is already running and
+does not construct a second application surface or profile/settings writer.
+
+The native tray is one long-lived Windows Forms `NotifyIcon` hosted by the WPF
+dispatcher; no Forms message loop was added. Its T4 commands are Show/Hide
+ChatGPT and Exit PetGPT. New PetChat, History, Pet, and Settings are explicitly
+disabled as unavailable. Show/Hide targets the same persistent
+`ChatBubbleWindow` and WebView instance used by pet click. The embedded
+multi-size `Assets/petgpt-fallback.ico` is used for the tray and its icon,
+menu, and NotifyIcon resources are disposed explicitly.
+
+`ChatWebViewService` now has one shared initialization task and explicit
+`NotStarted`, `Initializing`, `Ready`, `Failed`, `Disposing`, and `Disposed`
+states. Initialization can succeed at most once; a failure remains truthful and
+requires restart rather than a fake retry. Reload is a no-op unless Ready.
+Shutdown cancels new initialization/navigation/styling work, removes the
+navigation subscription, and disposes WebView2 on the WPF UI thread. Late
+initialization completion cannot return the service to Ready. Browser startup
+errors are caught outside the WPF `Loaded` event and shown in a small native
+surface with Hide and Exit actions.
+
+Explicit Exit is idempotent and ordered: reject further intents; stop browser
+and geometry work; queue final pet placement; perform a bounded settings flush;
+dispose browser subscriptions/control; close bubble; close pet; dispose the
+tray; release the instance guard; and call WPF shutdown once. Bubble-hidden,
+bubble-visible, initialization-in-flight, repeated-Exit, and close-callback
+paths converge on that sequence. The WebView2 profile remains exactly
+`%LOCALAPPDATA%\PetGPT\WebView2`, and hiding never recreates it.
+Windows session ending runs the same cleanup with a four-second dispatcher
+bound, then leaves the final system-requested WPF shutdown to WPF.
+
+Automated T4 evidence: 10 focused lifecycle tests cover shared initialization,
+failure/disposed state rejection, dispose-before-initialize completion,
+idempotent disposal/Exit, ordered cleanup after failed or non-cooperative flush,
+session-ending cleanup ownership, stable user-scoped mutex naming, exclusive
+ownership, and reacquisition. The full suite passes 63 tests. `dotnet build
+PetGPT.csproj` succeeds with 0 warnings and 0 errors. A Release publish also
+succeeds, contains `PetGPT.exe`, and exposes a readable nine-image embedded
+fallback icon. A `dotnet run --project PetGPT.csproj --no-build`
+smoke stayed alive and responsive for more than 10 seconds with no console
+exception; the fallback icon was also confirmed as the embedded resource
+`PetGPT.Assets.petgpt-fallback.ico`. That smoke process was stopped from the
+terminal and is not evidence for an application Exit path.
+
+Native Windows app automation was unavailable in this run. User-operated
+verification remains required for tray and pet visibility; same-instance
+Show/Hide and login preservation; ×/Escape hide; pet-menu and tray Exit;
+repeated Exit; second-launch behavior; Exit during WebView initialization;
+restart persistence; and Explorer restart/tray recovery. Real multi-monitor and
+mixed-DPI hardware validation remains outstanding from T3. T5 and later work
+has not started.

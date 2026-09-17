@@ -1,13 +1,26 @@
 # Architecture
 
-`PetWindow` is a transparent, always-on-top WPF window and owns the lifetime of
-`ChatBubbleWindow`.
+`AppLifetime` is the explicit application owner. It acquires the user-scoped
+single-instance guard before creating settings, windows, tray, or browser
+resources; owns `SettingsService`, `PetWindow`, `ChatBubbleWindow`, and
+`TrayService`; and performs the one ordered Exit path before calling WPF
+`Application.Shutdown`. WPF uses `OnExplicitShutdown`.
+
+`PetWindow` is a transparent, always-on-top WPF window. It reports toggle,
+geometry, and Exit intents to `AppLifetime` and does not own the bubble or the
+application lifetime.
 
 `ChatBubbleWindow` hosts WebView2 and loads `https://chatgpt.com/`.
 
-`ChatWebViewService` creates a persistent WebView2 profile under
+`ChatWebViewService` creates one persistent WebView2 profile under
 `%LOCALAPPDATA%\PetGPT\WebView2` and applies optional cosmetic compact-mode
-CSS/JS after navigation.
+CSS/JS after navigation. A single shared initialization task moves through
+`NotStarted`, `Initializing`, `Ready`, `Failed`, `Disposing`, and `Disposed`;
+shutdown prevents late initialization or styling from reviving the browser.
+
+`TrayService` owns one Windows Forms `NotifyIcon`, its menu, and its icon
+resources while WPF remains the only application/message loop. T4 exposes only
+Show/Hide and Exit; future feature entries are visibly disabled.
 
 `SettingsService` stores validated non-sensitive UI settings under
 `%LOCALAPPDATA%\PetGPT\settings.v2.json`, with the original `settings.json`

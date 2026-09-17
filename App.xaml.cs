@@ -1,18 +1,22 @@
-using System.Windows;
-using PetGPT.Services;
-using PetGPT.Windows;
+using PetGPT.Shell;
 
 namespace PetGPT;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    private AppLifetime? _lifetime;
+
+    protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        var settings = new SettingsService();
-        var petWindow = new PetWindow(settings);
-        MainWindow = petWindow;
-        petWindow.Show();
+        _lifetime = new AppLifetime(this);
+        _lifetime.Start();
+    }
+
+    protected override void OnSessionEnding(System.Windows.SessionEndingCancelEventArgs e)
+    {
+        _lifetime?.HandleSessionEnding();
+        base.OnSessionEnding(e);
     }
 }

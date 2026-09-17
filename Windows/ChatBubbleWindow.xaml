@@ -39,7 +39,33 @@
                 </StackPanel>
             </Grid>
 
-            <wv2:WebView2 x:Name="ChatWebView" Grid.Row="1"/>
+            <Grid Grid.Row="1">
+                <wv2:WebView2 x:Name="ChatWebView"/>
+
+                <Border x:Name="BrowserStatusPanel"
+                        Visibility="Collapsed"
+                        Background="#F7F7F7"
+                        Padding="24">
+                    <StackPanel VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                MaxWidth="360">
+                        <TextBlock x:Name="BrowserStatusText"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal"
+                                    HorizontalAlignment="Center">
+                            <Button Content="Hide"
+                                    Padding="16,6"
+                                    Margin="0,0,8,0"
+                                    Click="OnClose"/>
+                            <Button Content="Exit PetGPT"
+                                    Padding="16,6"
+                                    Click="OnExit"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Border>
 </Window>

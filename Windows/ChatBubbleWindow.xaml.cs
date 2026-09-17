@@ -12,20 +12,27 @@ public partial class ChatBubbleWindow : Window
     private readonly SettingsService _settingsService;
     private readonly Window _pet;
     private readonly ChatWebViewService _chatService;
+    private readonly Action _exitRequested;
     private readonly double _normalMinWidthDip;
     private readonly double _normalMinHeightDip;
     private IReadOnlyList<MonitorInfo> _monitors = [];
     private bool _geometryReady;
     private bool _applyingGeometry;
     private bool _allowClose;
+    private bool _appShuttingDown;
 
-    public ChatBubbleWindow(AppSettings settings, SettingsService settingsService, Window pet)
+    public ChatBubbleWindow(
+        AppSettings settings,
+        SettingsService settingsService,
+        Window pet,
+        Action exitRequested)
     {
         InitializeComponent();
 
         _settings = settings;
         _settingsService = settingsService;
         _pet = pet;
+        _exitRequested = exitRequested;
         _normalMinWidthDip = MinWidth;
         _normalMinHeightDip = MinHeight;
 
@@ -40,7 +47,7 @@ public partial class ChatBubbleWindow : Window
         DpiChanged += OnDpiChanged;
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _monitors = WindowPositionService.GetMonitors();
         ApplyConfiguredPlacement();
@@ -48,7 +55,31 @@ public partial class ChatBubbleWindow : Window
         if (_settings.ChatWindow.PlacementMode != "FollowPet")
             PersistFreePlacement();
 
-        await _chatService.InitializeAsync(_settings.CompactMode);
+        _ = InitializeBrowserWithErrorHandlingAsync();
+    }
+
+    private async Task InitializeBrowserWithErrorHandlingAsync()
+    {
+        try
+        {
+            await _chatService.InitializeAsync(_settings.CompactMode);
+        }
+        catch (OperationCanceledException) when (_appShuttingDown)
+        {
+        }
+        catch
+        {
+            if (!_appShuttingDown)
+                ShowBrowserInitializationError();
+        }
+    }
+
+    private void ShowBrowserInitializationError()
+    {
+        ChatWebView.Visibility = Visibility.Collapsed;
+        BrowserStatusText.Text =
+            "ChatGPT could not start in PetGPT. Hide this window or exit PetGPT, then restart to try again.";
+        BrowserStatusPanel.Visibility = Visibility.Visible;
     }
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -72,7 +103,7 @@ public partial class ChatBubbleWindow : Window
         PersistFreePlacement();
     }
 
-    private void OnDpiChanged(object sender, DpiChangedEventArgs e)
+    private void OnDpiChanged(object sender, System.Windows.DpiChangedEventArgs e)
     {
         if (!_geometryReady || Dispatcher.HasShutdownStarted)
             return;
@@ -143,14 +174,17 @@ public partial class ChatBubbleWindow : Window
         _settingsService.RequestSave(_settings);
     }
 
-    private void OnKeyDown(object sender, KeyEventArgs e)
+    private void OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key == Key.Escape)
+        if (!_appShuttingDown && e.Key == Key.Escape)
             Hide();
     }
 
     private void OnOpenBrowser(object sender, RoutedEventArgs e)
     {
+        if (_appShuttingDown)
+            return;
+
         Process.Start(new ProcessStartInfo
         {
             FileName = "https://chatgpt.com/",
@@ -160,13 +194,29 @@ public partial class ChatBubbleWindow : Window
 
     private void OnReload(object sender, RoutedEventArgs e)
     {
-        _chatService.Reload();
+        if (!_appShuttingDown)
+            _chatService.Reload();
     }
 
     private void OnClose(object sender, RoutedEventArgs e)
     {
-        Hide();
+        if (!_appShuttingDown)
+            Hide();
     }
+
+    private void OnExit(object sender, RoutedEventArgs e)
+    {
+        _exitRequested();
+    }
+
+    public void BeginAppShutdown()
+    {
+        _appShuttingDown = true;
+        _geometryReady = false;
+        _chatService.BeginShutdown();
+    }
+
+    public Task DisposeBrowserAsync() => _chatService.DisposeAsync();
 
     public void CloseForAppShutdown()
     {

@@ -41,6 +41,7 @@ Edit:
 - The T0 baseline restore, build, and process-launch checks passed on Windows 11;
   interactive GUI behavior still requires manual verification. See
   `docs/validation/windows-smoke.md` for the exact evidence and checklist.
-- Positioning is not yet per-monitor/DPI aware.
+- Per-monitor/DPI positioning has synthetic coverage; real mixed-DPI and
+  monitor unplug/replug hardware checks remain outstanding.
 - Bubble visuals are intentionally basic.
 - ChatGPT frontend changes may require compact-mode updates.

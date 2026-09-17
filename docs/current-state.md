@@ -125,3 +125,46 @@ native GUI paths still require manual user verification after this change.
 
 Detailed persistence behavior is in
 [`docs/contracts/settings-v2.md`](contracts/settings-v2.md).
+
+## Post-T2 user verification
+
+The user subsequently verified on the current single-monitor system that the
+pet and ChatGPT open; pet position and bubble size survive Exit/restart;
+immediate Exit after drag preserves position; open/hide/reopen, Reload, and
+normal ChatGPT interaction still work; and compact mode remains visually
+correct. This is user-operated evidence for the T2 baseline, not T3 or
+multi-monitor verification.
+
+## T3 monitor-aware geometry — 2026-09-17
+
+T3 enables Per-Monitor V2 in the embedded application manifest and makes
+geometry units explicit. Monitor bounds, work areas, cursor positions, drag
+deltas, and native window rectangles are physical pixels. Persisted offsets and
+WPF sizes are DIPs, converted once at the `WindowPositionService` boundary.
+Dragging now moves the native window from its initial physical rectangle and no
+longer adds physical-pixel deltas to WPF `Left`/`Top` values.
+
+Pet and free-chat placement now persist monitor identity plus work-area-relative
+DIP offsets. Restore supports negative coordinates, missing-monitor fallback,
+taskbars on every edge, oversized-window clamping, and best-effort migration of
+legacy/T2 global coordinates. `FollowPet` remains the effective default and
+chooses above/below before clamping; `Free` restores its own position but has no
+settings UI yet. Display, work-area, and DPI changes use Windows/WPF events with
+no polling and do not double-apply WPF's suggested DPI bounds.
+
+Automated evidence: 26 `WindowGeometryTests` cases cover synthetic 100%, 150%,
+and 200% DPI monitors, mixed layouts, negative coordinates, all taskbar edges,
+monitor removal fallback, clamping, FollowPet/Free behavior, conversion
+round-trips, drag deltas, and legacy/T2 recovery. The full suite passes 53 tests.
+An existing T2 concurrent-save race exposed by the full suite was fixed by
+capturing the debounce cancellation token while holding the settings lock.
+
+The current machine has one 100%-DPI monitor. The T3 process-start smoke found
+no immediate crash, but native GUI automation was unavailable. Pet visibility,
+drag/click distinction, bubble following, restart restore, resize persistence,
+and on-screen clamping require user verification. Real two-monitor behavior,
+mixed-DPI transitions, monitor unplug/replug, primary-monitor changes, and
+taskbar movement remain explicitly unverified on hardware.
+
+Detailed unit and placement behavior is in
+[`docs/contracts/window-geometry.md`](contracts/window-geometry.md).

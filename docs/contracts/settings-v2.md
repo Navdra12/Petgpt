@@ -45,8 +45,10 @@ Schema version `2` contains:
 - `SuspendHiddenBrowser`: `false`.
 
 Legacy `PetLeft`, `PetTop`, `BubbleWidth`, `BubbleHeight`, and `CompactMode` are
-migrated exactly where valid. Monitor-relative interpretation and mixed-DPI
-clamping belong to T3; T2 deliberately preserves the MVP coordinate behavior.
+migrated exactly where valid. T3 converts a restored window into monitor ID plus
+work-area-relative DIP offsets. Historical global coordinates without a monitor
+ID are a best-effort input because mixed-DPI intent cannot be reconstructed;
+nearest/primary fallback and work-area clamping keep the windows usable.
 
 ## Validation and writes
 

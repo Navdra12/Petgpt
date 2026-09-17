@@ -13,8 +13,10 @@ CSS/JS after navigation.
 `%LOCALAPPDATA%\PetGPT\settings.v2.json`, with the original `settings.json`
 retained as read-only migration input.
 
-The first scaffold uses the primary WPF work area. Per-monitor DPI-aware
-positioning is intentionally deferred until the app is running on Windows.
+`WindowPositionService` owns Per-Monitor V2 geometry. Native monitor, cursor,
+drag, and window rectangles use physical pixels; persisted positions and WPF
+sizes use DIPs at an explicit conversion boundary. See the
+[window geometry contract](docs/contracts/window-geometry.md).
 
 See the [PetGPT v2 design](docs/superpowers/specs/2026-09-17-petgpt-v2-design.md)
 for the proposed full architecture.

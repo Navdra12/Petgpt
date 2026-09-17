@@ -138,7 +138,7 @@ public sealed class SettingsService
             return;
         }
 
-        CancellationTokenSource cancellation;
+        CancellationToken cancellationToken;
         lock (_stateGate)
         {
             if (_readOnlyRecovery)
@@ -150,11 +150,11 @@ public sealed class SettingsService
             _pendingSnapshot = copy;
             _debounceCancellation?.Cancel();
             _debounceCancellation?.Dispose();
-            cancellation = new CancellationTokenSource();
-            _debounceCancellation = cancellation;
+            _debounceCancellation = new CancellationTokenSource();
+            cancellationToken = _debounceCancellation.Token;
         }
 
-        _ = DebounceAndWriteAsync(cancellation.Token);
+        _ = DebounceAndWriteAsync(cancellationToken);
     }
 
     public async Task FlushAsync(CancellationToken cancellationToken)
@@ -352,7 +352,7 @@ public sealed class SettingsService
         ValidateCoordinate(settings.PetPlacement.XWithinWorkAreaDip);
         ValidateCoordinate(settings.PetPlacement.YWithinWorkAreaDip);
 
-        if (settings.ChatWindow.PlacementMode is not ("FollowPet" or "Remembered") ||
+        if (settings.ChatWindow.PlacementMode is not ("FollowPet" or "Free" or "Remembered") ||
             !IsFiniteInRange(settings.ChatWindow.WidthDip, 100, 10_000) ||
             !IsFiniteInRange(settings.ChatWindow.HeightDip, 100, 10_000))
         {

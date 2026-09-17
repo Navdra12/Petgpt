@@ -14,3 +14,6 @@ CSS/JS after navigation.
 
 The first scaffold uses the primary WPF work area. Per-monitor DPI-aware
 positioning is intentionally deferred until the app is running on Windows.
+
+See the [PetGPT v2 design](docs/superpowers/specs/2026-09-17-petgpt-v2-design.md)
+for the proposed full architecture.

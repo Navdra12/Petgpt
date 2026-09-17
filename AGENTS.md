@@ -36,6 +36,9 @@ dotnet run
 - `docs/product.md`
 - `docs/decisions.md`
 - `docs/current-state.md`
+- [PetGPT v2 design](docs/superpowers/specs/2026-09-17-petgpt-v2-design.md)
+- [PetGPT v2 implementation plan](docs/superpowers/plans/2026-09-17-petgpt-v2.md)
+- [PetGPT v2 Codex handoff](docs/superpowers/handoffs/2026-09-17-petgpt-v2-codex.md)
 
 Read this file first, then only docs relevant to the task.
 

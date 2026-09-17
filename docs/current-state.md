@@ -9,7 +9,9 @@
 - optional cosmetic compact CSS/JS
 - Open in browser, Reload, Close, and Escape-to-hide paths
 - right-click Open/Hide ChatGPT and Exit PetGPT menu
-- basic UI settings at `%LOCALAPPDATA%\PetGPT\settings.json`
+- validated settings v2 at `%LOCALAPPDATA%\PetGPT\settings.v2.json`, with the
+  original `%LOCALAPPDATA%\PetGPT\settings.json` retained as read-only migration
+  input
 - clean shutdown path that allows a hidden chat bubble to close
 
 ## T0 verification — 2026-09-17
@@ -93,3 +95,33 @@ Safe structural composer-empty detection remains **UNKNOWN** for the observed
 gated and must fall back to Copy context. IME and some Back/Forward edge cases
 also remain follow-up items. These limits do not reverse the reaction transport
 GO and do not imply that current ChatGPT selectors are supported public APIs.
+
+## T2 settings persistence — 2026-09-17
+
+T2 introduces schema-versioned, validated settings without changing browser
+identity or WebView behavior. Loading now uses valid v2, one last-good backup,
+legacy v0, then safe defaults. Corrupt v2 bytes receive bounded recovery names;
+future schemas remain untouched in read-only/default recovery mode. Ordinary
+geometry changes queue copied snapshots with a 500 ms debounce, while drag
+completion and normal Exit flush serialized same-directory atomic writes.
+
+The v2 defaults keep the legacy pet selected, compact styling and themes on,
+and roleplay/reactions off. The legacy settings file is never written, and the
+WebView2 profile path and package version remain unchanged. T3 monitor/DPI
+placement, app-owned lifetime/tray work, character packs, roleplay, reactions,
+and later v2 subsystems have not started.
+
+Automated T2 evidence: 27 focused xUnit cases cover defaults, legacy migration,
+v2/backup precedence, corrupt/future recovery, bounded validation, atomic-write
+failure/retry, concurrency/debounce, copied snapshots, explicit flush, and
+legacy-file preservation. The project and tests were built in Release during development
+because a user-operated Debug PetGPT process was already running; final command
+results are recorded with the T2 completion report.
+
+The persistence implementation does not itself prove pet visibility, drag,
+click/open/hide, ChatGPT interaction/login, Reload, browser opening,
+context-menu Exit, resizing, multi-monitor placement, or DPI behavior. Those
+native GUI paths still require manual user verification after this change.
+
+Detailed persistence behavior is in
+[`docs/contracts/settings-v2.md`](contracts/settings-v2.md).

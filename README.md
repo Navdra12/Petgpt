@@ -20,7 +20,10 @@ WebView2 session:
 `%LOCALAPPDATA%\PetGPT\WebView2`
 
 UI settings:
-`%LOCALAPPDATA%\PetGPT\settings.json`
+`%LOCALAPPDATA%\PetGPT\settings.v2.json`
+
+The legacy `%LOCALAPPDATA%\PetGPT\settings.json` remains untouched as migration
+input for rollback compatibility.
 
 To clear the embedded ChatGPT session, close PetGPT and delete the WebView2
 folder.

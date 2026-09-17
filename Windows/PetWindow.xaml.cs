@@ -13,13 +13,14 @@ public partial class PetWindow : Window
     private Point _mouseDownScreen;
     private bool _dragging;
     private bool _isExiting;
+    private bool _allowClose;
 
     public PetWindow(SettingsService settingsService)
     {
         InitializeComponent();
 
         _settingsService = settingsService;
-        _settings = _settingsService.Load();
+        _settings = _settingsService.Load().Settings;
 
         Loaded += OnLoaded;
         LocationChanged += OnLocationChanged;
@@ -32,10 +33,11 @@ public partial class PetWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_settings.PetLeft.HasValue && _settings.PetTop.HasValue)
+        if (_settings.PetPlacement.XWithinWorkAreaDip.HasValue &&
+            _settings.PetPlacement.YWithinWorkAreaDip.HasValue)
         {
-            Left = _settings.PetLeft.Value;
-            Top = _settings.PetTop.Value;
+            Left = _settings.PetPlacement.XWithinWorkAreaDip.Value;
+            Top = _settings.PetPlacement.YWithinWorkAreaDip.Value;
         }
         else
         {
@@ -69,14 +71,18 @@ public partial class PetWindow : Window
         RepositionBubble();
     }
 
-    private void OnPetMouseUp(object sender, MouseButtonEventArgs e)
+    private async void OnPetMouseUp(object sender, MouseButtonEventArgs e)
     {
         PetImage.ReleaseMouseCapture();
 
-        if (!_dragging)
+        var completedDrag = _dragging;
+        if (!completedDrag)
             ToggleBubble();
 
         _dragging = false;
+
+        if (completedDrag)
+            await _settingsService.FlushAsync(CancellationToken.None);
     }
 
     private void OnToggleChatMenuItemClick(object sender, RoutedEventArgs e)
@@ -84,9 +90,9 @@ public partial class PetWindow : Window
         ToggleBubble();
     }
 
-    private void OnExitMenuItemClick(object sender, RoutedEventArgs e)
+    private async void OnExitMenuItemClick(object sender, RoutedEventArgs e)
     {
-        ExitApplication();
+        await ExitApplicationAsync();
     }
 
     private void ToggleBubble()
@@ -97,7 +103,7 @@ public partial class PetWindow : Window
             return;
         }
 
-        _bubble ??= new ChatBubbleWindow(_settings, this);
+        _bubble ??= new ChatBubbleWindow(_settings, _settingsService, this);
         WindowPositionService.PositionBubble(_bubble, this);
         _bubble.Show();
         _bubble.Activate();
@@ -105,9 +111,9 @@ public partial class PetWindow : Window
 
     private void OnLocationChanged(object? sender, EventArgs e)
     {
-        _settings.PetLeft = Left;
-        _settings.PetTop = Top;
-        _settingsService.Save(_settings);
+        _settings.PetPlacement.XWithinWorkAreaDip = Left;
+        _settings.PetPlacement.YWithinWorkAreaDip = Top;
+        _settingsService.RequestSave(_settings);
         RepositionBubble();
     }
 
@@ -117,27 +123,30 @@ public partial class PetWindow : Window
             WindowPositionService.PositionBubble(_bubble, this);
     }
 
-    private void ExitApplication()
+    private async Task ExitApplicationAsync()
     {
         if (_isExiting)
             return;
 
         _isExiting = true;
 
-        _settings.PetLeft = Left;
-        _settings.PetTop = Top;
-        _settingsService.Save(_settings);
+        _settings.PetPlacement.XWithinWorkAreaDip = Left;
+        _settings.PetPlacement.YWithinWorkAreaDip = Top;
+        _settingsService.RequestSave(_settings);
+        await _settingsService.FlushAsync(CancellationToken.None);
 
+        _allowClose = true;
         _bubble?.CloseForAppShutdown();
         Close();
     }
 
-    private void OnPetWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    private async void OnPetWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (_allowClose)
+            return;
+
+        e.Cancel = true;
         if (!_isExiting)
-        {
-            _isExiting = true;
-            _bubble?.CloseForAppShutdown();
-        }
+            await ExitApplicationAsync();
     }
 }

@@ -9,19 +9,21 @@ namespace PetGPT.Windows;
 public partial class ChatBubbleWindow : Window
 {
     private readonly AppSettings _settings;
+    private readonly SettingsService _settingsService;
     private readonly Window _pet;
     private readonly ChatWebViewService _chatService;
     private bool _allowClose;
 
-    public ChatBubbleWindow(AppSettings settings, Window pet)
+    public ChatBubbleWindow(AppSettings settings, SettingsService settingsService, Window pet)
     {
         InitializeComponent();
 
         _settings = settings;
+        _settingsService = settingsService;
         _pet = pet;
 
-        Width = settings.BubbleWidth;
-        Height = settings.BubbleHeight;
+        Width = settings.ChatWindow.WidthDip;
+        Height = settings.ChatWindow.HeightDip;
 
         _chatService = new ChatWebViewService(ChatWebView);
 
@@ -37,8 +39,9 @@ public partial class ChatBubbleWindow : Window
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        _settings.BubbleWidth = Width;
-        _settings.BubbleHeight = Height;
+        _settings.ChatWindow.WidthDip = Width;
+        _settings.ChatWindow.HeightDip = Height;
+        _settingsService.RequestSave(_settings);
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)

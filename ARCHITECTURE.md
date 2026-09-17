@@ -9,8 +9,9 @@
 `%LOCALAPPDATA%\PetGPT\WebView2` and applies optional cosmetic compact-mode
 CSS/JS after navigation.
 
-`SettingsService` stores non-sensitive UI settings under
-`%LOCALAPPDATA%\PetGPT\settings.json`.
+`SettingsService` stores validated non-sensitive UI settings under
+`%LOCALAPPDATA%\PetGPT\settings.v2.json`, with the original `settings.json`
+retained as read-only migration input.
 
 The first scaffold uses the primary WPF work area. Per-monitor DPI-aware
 positioning is intentionally deferred until the app is running on Windows.

@@ -6,12 +6,12 @@ public partial class App : System.Windows.Application
 {
     private AppLifetime? _lifetime;
 
-    protected override void OnStartup(System.Windows.StartupEventArgs e)
+    protected override async void OnStartup(System.Windows.StartupEventArgs e)
     {
         base.OnStartup(e);
 
         _lifetime = new AppLifetime(this);
-        _lifetime.Start();
+        await _lifetime.StartAsync();
     }
 
     protected override void OnSessionEnding(System.Windows.SessionEndingCancelEventArgs e)

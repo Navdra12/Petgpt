@@ -7,6 +7,52 @@ namespace PetGPT.Tests;
 public sealed class WindowGeometryTests
 {
     [Fact]
+    public void ResizeAroundAnchor_PreservesBottomCenterAcrossPresentationSizes()
+    {
+        var monitor = new MonitorInfo(
+            "primary",
+            new ScreenRectPx(0, 0, 1000, 1000),
+            new ScreenRectPx(0, 0, 1000, 1000),
+            96,
+            96,
+            true);
+
+        var resized = WindowPositionService.ResizeAroundAnchor(
+            new ScreenRectPx(100, 100, 150, 150),
+            oldAnchorX: 0.5,
+            oldAnchorY: 1,
+            new SizeDip(200, 100),
+            newAnchorX: 0.5,
+            newAnchorY: 1,
+            [monitor]);
+
+        Assert.Equal(new ScreenRectPx(75, 150, 200, 100), resized);
+    }
+
+    [Fact]
+    public void ResizeAroundAnchor_ClampsResizedPresentationToWorkArea()
+    {
+        var monitor = new MonitorInfo(
+            "primary",
+            new ScreenRectPx(0, 0, 1000, 1000),
+            new ScreenRectPx(0, 0, 1000, 1000),
+            96,
+            96,
+            true);
+
+        var resized = WindowPositionService.ResizeAroundAnchor(
+            new ScreenRectPx(850, 850, 140, 140),
+            oldAnchorX: 1,
+            oldAnchorY: 1,
+            new SizeDip(300, 300),
+            newAnchorX: 0,
+            newAnchorY: 0,
+            [monitor]);
+
+        Assert.Equal(new ScreenRectPx(692, 692, 300, 300), resized);
+    }
+
+    [Fact]
     public void RestorePlacement_UsesDipOffsetsAtOneHundredPercentDpi()
     {
         var monitor = Monitor("primary", 0, 0, 1920, 1080, dpi: 96, primary: true);

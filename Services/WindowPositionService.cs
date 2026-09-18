@@ -97,6 +97,33 @@ public static class WindowPositionService
             initialWindowRectPx.Width,
             initialWindowRectPx.Height);
 
+    public static ScreenRectPx ResizeAroundAnchor(
+        ScreenRectPx currentRectPx,
+        double oldAnchorX,
+        double oldAnchorY,
+        SizeDip newSizeDip,
+        double newAnchorX,
+        double newAnchorY,
+        IReadOnlyList<MonitorInfo> monitors)
+    {
+        ValidateAnchor(oldAnchorX, nameof(oldAnchorX));
+        ValidateAnchor(oldAnchorY, nameof(oldAnchorY));
+        ValidateAnchor(newAnchorX, nameof(newAnchorX));
+        ValidateAnchor(newAnchorY, nameof(newAnchorY));
+        var available = RequireMonitors(monitors);
+        var monitor = SelectMonitorForRect(currentRectPx, available);
+        var widthPx = DipToPx(newSizeDip.Width, monitor.DpiX);
+        var heightPx = DipToPx(newSizeDip.Height, monitor.DpiY);
+        var screenAnchorX = currentRectPx.Left + (currentRectPx.Width * oldAnchorX);
+        var screenAnchorY = currentRectPx.Top + (currentRectPx.Height * oldAnchorY);
+        var desired = new ScreenRectPx(
+            screenAnchorX - (widthPx * newAnchorX),
+            screenAnchorY - (heightPx * newAnchorY),
+            widthPx,
+            heightPx);
+        return ClampToMonitor(desired, monitor);
+    }
+
     public static ScreenRectPx ClampToAvailableWorkArea(
         ScreenRectPx windowRectPx,
         IReadOnlyList<MonitorInfo> monitors)
@@ -239,6 +266,9 @@ public static class WindowPositionService
     public static void MoveWindowToScreenRect(Window window, ScreenRectPx rectanglePx) =>
         ApplyScreenRect(window, rectanglePx, resize: false);
 
+    public static void ResizeWindowToScreenRect(Window window, ScreenRectPx rectanglePx) =>
+        ApplyScreenRect(window, rectanglePx, resize: true);
+
     public static WindowPlacement CapturePlacement(Window window) =>
         CreatePlacement(GetWindowRectPx(window), GetMonitors());
 
@@ -351,6 +381,12 @@ public static class WindowPositionService
             throw new ArgumentOutOfRangeException(nameof(dpi));
 
         return dpi;
+    }
+
+    private static void ValidateAnchor(double value, string parameterName)
+    {
+        if (!double.IsFinite(value) || value < 0 || value > 1)
+            throw new ArgumentOutOfRangeException(parameterName);
     }
 
     private static double IntersectionArea(ScreenRectPx first, ScreenRectPx second)

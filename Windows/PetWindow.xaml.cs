@@ -3,6 +3,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using PetGPT.Models;
 using PetGPT.Services;
+using PetGPT.Shell;
 
 namespace PetGPT.Windows;
 
@@ -19,6 +20,9 @@ public partial class PetWindow : Window
     private bool _dragging;
     private bool _geometryReady;
     private bool _allowClose;
+    private bool _applyingPresentation;
+    private double _presentationAnchorX = 0.5;
+    private double _presentationAnchorY = 1;
 
     public PetWindow(
         SettingsService settingsService,
@@ -48,6 +52,80 @@ public partial class PetWindow : Window
     }
 
     public IReadOnlyList<MonitorInfo> CurrentMonitors => _monitors;
+
+    internal void ApplySelection(PreparedPetSelection prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        var presentation = prepared.Pack.Presentation;
+        if (!_geometryReady)
+        {
+            Width = presentation.WidthDip;
+            Height = presentation.HeightDip;
+            PetImage.Source = prepared.IdleImage;
+            _presentationAnchorX = presentation.AnchorX;
+            _presentationAnchorY = presentation.AnchorY;
+            return;
+        }
+
+        var previousRect = WindowPositionService.GetWindowRectPx(this);
+        var previousWidth = Width;
+        var previousHeight = Height;
+        var previousImage = PetImage.Source;
+        var previousAnchorX = _presentationAnchorX;
+        var previousAnchorY = _presentationAnchorY;
+        var previousPlacement = _settings.PetPlacement.Copy();
+        var targetRect = WindowPositionService.ResizeAroundAnchor(
+            previousRect,
+            previousAnchorX,
+            previousAnchorY,
+            new SizeDip(presentation.WidthDip, presentation.HeightDip),
+            presentation.AnchorX,
+            presentation.AnchorY,
+            _monitors);
+
+        try
+        {
+            _applyingPresentation = true;
+            WindowPositionService.ResizeWindowToScreenRect(this, targetRect);
+            Width = presentation.WidthDip;
+            Height = presentation.HeightDip;
+            PetImage.Source = prepared.IdleImage;
+            _presentationAnchorX = presentation.AnchorX;
+            _presentationAnchorY = presentation.AnchorY;
+            UpdatePersistedPlacementWithoutSave();
+        }
+        catch
+        {
+            Width = previousWidth;
+            Height = previousHeight;
+            PetImage.Source = previousImage;
+            _presentationAnchorX = previousAnchorX;
+            _presentationAnchorY = previousAnchorY;
+            _settings.PetPlacement = previousPlacement;
+            try
+            {
+                WindowPositionService.ResizeWindowToScreenRect(this, previousRect);
+            }
+            catch
+            {
+                // Preserve the original exception; the prior presentation data is restored.
+            }
+            throw;
+        }
+        finally
+        {
+            _applyingPresentation = false;
+        }
+
+        try
+        {
+            _bubbleRepositionRequested(_monitors);
+        }
+        catch
+        {
+            // Bubble follow placement is best effort and never invalidates pet selection.
+        }
+    }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -145,7 +223,7 @@ public partial class PetWindow : Window
 
     private void OnLocationChanged(object? sender, EventArgs e)
     {
-        if (!_geometryReady)
+        if (!_geometryReady || _applyingPresentation)
             return;
 
         PersistPetPlacement();
@@ -158,11 +236,16 @@ public partial class PetWindow : Window
         if (!_geometryReady)
             return;
 
+        UpdatePersistedPlacementWithoutSave();
+        _settingsService.RequestSave(_settings);
+    }
+
+    private void UpdatePersistedPlacementWithoutSave()
+    {
         var placement = WindowPositionService.CapturePlacement(this, _monitors);
         _settings.PetPlacement.MonitorId = placement.MonitorId;
         _settings.PetPlacement.XWithinWorkAreaDip = placement.XWithinWorkAreaDip;
         _settings.PetPlacement.YWithinWorkAreaDip = placement.YWithinWorkAreaDip;
-        _settingsService.RequestSave(_settings);
     }
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e) => QueueDisplayGeometryRefresh();

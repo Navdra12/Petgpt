@@ -304,3 +304,58 @@ No T6 runtime selection, tray character menu, animation engine, persona
 activation, reaction execution, theme application, WebView/navigation change,
 or command system has been added. The complete data/install contract is in
 [`docs/contracts/character-pack-v1.md`](contracts/character-pack-v1.md).
+
+## T6 transactional local character selection — 2026-09-18
+
+`PetSelectionService` is now the single owner of exact local character
+selection. Startup resolves the configured ID and strict SemVer entry exactly;
+it never substitutes another installed version. A missing or unpreparable
+configured pack falls back to the single bundled `legacy` compatibility pack
+and requests debounced persistence of the corrected exact ID/version. If even
+legacy cannot be prepared, startup remains usable with the XAML emergency
+placeholder and fallback tray icon, exposes bounded diagnostics, and does not
+invent a valid `CharacterPack`.
+
+Every selection is serialized and prepare-before-commit. The required idle PNG
+is opened, decoded eagerly with `BitmapCacheOption.OnLoad`, frozen, and released
+from its file stream before any visible state changes. Runtime disappearance or
+decode failure rejects the candidate without changing the active immutable
+pack, selected settings, pet presentation, tray check, or tray icon. A valid
+optional pack icon is cloned without retaining a file lock; missing or failed
+optional icon preparation uses the embedded PetGPT fallback icon. TrayService
+owns the icon assigned to `NotifyIcon` and disposes the superseded resource only
+after replacement.
+
+On commit, PetWindow applies the pack's width, height, anchor, and prepared idle
+image. Runtime resizing preserves the previous normalized screen anchor as
+closely as possible in physical pixels, clamps through the existing T3
+monitor/work-area geometry, and records the resulting monitor-relative DIP
+placement. `SelectedPetId` and the exact `SelectedPackVersions` entry are then
+queued through the existing copied/debounced `SettingsService.RequestSave`
+path. A successful change emits one `SelectionChanged` event carrying the
+immutable `CharacterPack`; rejected, failed, and exact no-op selections emit
+none.
+
+The tray Pet placeholder is replaced by a submenu containing only catalog packs.
+Commands carry exact ID/version pairs; multiple versions are labeled with their
+SemVer, and the checked item moves only as part of a successful commit. A fresh
+production install currently exposes only Legacy, while automated fixtures
+exercise distinct packs and active-version replacement.
+
+Local selection does not construct, recreate, reload, navigate, or otherwise
+touch `ChatBubbleWindow`, `ChatWebViewService`, the WebView2 control, or
+`%LOCALAPPDATA%\PetGPT\WebView2`. Persona, theme, reaction, and animation data
+remain inert members of the selected snapshot for later subscribers; T6 does
+not activate or execute them.
+
+Automated T6 evidence: focused character-pack, selection, tray, and geometry
+tests pass 169 cases; the full suite passes 212 tests. Release build and clean
+publish results, publish-content audit, and the fresh published-executable smoke
+are recorded by the T6 completion run.
+
+Interactive switching between real imported characters was not available in
+the production distribution during this run. User-operated verification remains
+required for tray selection/check behavior, visible image/size/anchor changes,
+failed-selection UI stability, restart persistence, and icon replacement. The
+bounded executable smoke is not evidence for those GUI paths. Explorer restart
+recovery and real multi-monitor/mixed-DPI hardware checks also remain open.

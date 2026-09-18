@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Services;
 using PetGPT.Windows;
@@ -19,6 +20,7 @@ public sealed class AppLifetime
     private PetWindow? _petWindow;
     private ChatBubbleWindow? _bubbleWindow;
     private TrayService? _trayService;
+    private PetSelectionService? _petSelectionService;
     private AppShutdownCoordinator? _shutdown;
 
     public AppLifetime(System.Windows.Application application)
@@ -26,7 +28,7 @@ public sealed class AppLifetime
         _application = application ?? throw new ArgumentNullException(nameof(application));
     }
 
-    public bool Start()
+    public async Task<bool> StartAsync()
     {
         _shutdown = CreateShutdownCoordinator();
 
@@ -46,6 +48,7 @@ public sealed class AppLifetime
 
             _settingsService = new SettingsService();
             _settings = _settingsService.Load().Settings;
+            var catalogResult = new CharacterCatalog().LoadInstalled();
 
             _petWindow = new PetWindow(
                 _settingsService,
@@ -53,15 +56,26 @@ public sealed class AppLifetime
                 ToggleChat,
                 RequestExit,
                 RepositionVisibleBubble);
+            _petSelectionService = new PetSelectionService(
+                catalogResult.Packs,
+                _settings,
+                PetSelectionService.PrepareAsync,
+                ApplyPreparedSelection,
+                _settingsService.RequestSave);
+            _trayService = new TrayService(
+                ToggleChat,
+                RequestExit,
+                catalogResult.Packs,
+                SelectPetAsync);
+            _trayService.SetChatVisible(false);
+            await _petSelectionService.InitializeAsync(CancellationToken.None);
+
             _bubbleWindow = new ChatBubbleWindow(
                 _settings,
                 _settingsService,
                 _petWindow,
                 RequestExit);
             _bubbleWindow.IsVisibleChanged += OnBubbleVisibilityChanged;
-
-            _trayService = new TrayService(ToggleChat, RequestExit);
-            _trayService.SetChatVisible(false);
 
             _application.MainWindow = _petWindow;
             _petWindow.Show();
@@ -77,6 +91,16 @@ public sealed class AppLifetime
             RequestExit();
             return false;
         }
+    }
+
+    private Task<PetSelectionResult> SelectPetAsync(string id, string version) =>
+        _petSelectionService?.SelectAsync(id, version, CancellationToken.None) ??
+        Task.FromResult(PetSelectionResult.Failed("selection_unavailable"));
+
+    private void ApplyPreparedSelection(PreparedPetSelection prepared)
+    {
+        _petWindow?.ApplySelection(prepared);
+        _trayService?.ApplySelection(prepared.Pack, prepared.TrayIcon);
     }
 
     public void ToggleChat()
@@ -202,6 +226,8 @@ public sealed class AppLifetime
                 {
                     _trayService?.Dispose();
                     _trayService = null;
+                    _petSelectionService?.Dispose();
+                    _petSelectionService = null;
                 },
                 ReleaseInstanceGuard: () =>
                 {

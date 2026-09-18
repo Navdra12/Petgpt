@@ -350,6 +350,57 @@ public sealed class SettingsMigrationTests
         Assert.True(File.Exists(folder.File("settings.v2.json")));
     }
 
+    [Fact]
+    public async Task SelectedPackVersions_RoundTripsStrictSemanticVersions()
+    {
+        using var folder = new TemporaryFolder();
+        var service = CreateService(folder, TimeSpan.FromMinutes(1));
+        var settings = new AppSettings();
+        settings.SelectedPackVersions["alpha"] = "1.2.3-beta.1+fixture";
+
+        service.RequestSave(settings);
+        await service.FlushAsync(CancellationToken.None);
+
+        Assert.Equal(
+            "1.2.3-beta.1+fixture",
+            CreateService(folder).Load().Settings.SelectedPackVersions["alpha"]);
+    }
+
+    [Theory]
+    [InlineData("01.2.3")]
+    [InlineData("1.2")]
+    [InlineData("2.0.0-")]
+    public void Load_RejectsInvalidSelectedPackSemanticVersion(string version)
+    {
+        using var folder = new TemporaryFolder();
+        folder.Write(
+            "settings.v2.json",
+            ValidV2().Replace("\"SelectedPackVersions\":{}", $"\"SelectedPackVersions\":{{\"alpha\":\"{version}\"}}"));
+
+        Assert.Equal(SettingsLoadSource.Defaults, CreateService(folder).Load().Source);
+    }
+
+    [Fact]
+    public void FinalReview_LoadRejectsSelectedPackVersionTerminalNewline()
+    {
+        using var folder = new TemporaryFolder();
+        folder.Write("settings.v2.json", ValidV2().Replace("\"SelectedPackVersions\":{}",
+            "\"SelectedPackVersions\":{\"alpha\":\"1.2.3\\n\"}"));
+        Assert.Equal(SettingsLoadSource.Defaults, CreateService(folder).Load().Source);
+    }
+
+    [Fact]
+    public async Task FinalReview_SaveRejectsSelectedPackVersionTerminalNewline()
+    {
+        using var folder = new TemporaryFolder();
+        var service = CreateService(folder, TimeSpan.FromMinutes(1));
+        var settings = new AppSettings();
+        settings.SelectedPackVersions["alpha"] = "1.2.3\n";
+        service.RequestSave(settings);
+        await service.FlushAsync(CancellationToken.None);
+        Assert.False(File.Exists(folder.File("settings.v2.json")));
+    }
+
     private static SettingsService CreateService(TemporaryFolder folder, TimeSpan? delay = null) =>
         new(folder.Path, delay ?? TimeSpan.FromMilliseconds(500));
 

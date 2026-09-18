@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy",
+  "displayName": "Legacy Pet",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "persona": null,
+  "presentation": {
+    "widthDip": 150,
+    "heightDip": 150,
+    "anchor": {
+      "x": 0.5,
+      "y": 1.0
+    }
+  },
+  "clips": {
+    "idle": {
+      "format": "png",
+      "path": "assets/idle.png",
+      "playback": "hold"
+    }
+  },
+  "systemAnimations": {
+    "idle": [
+      "idle"
+    ]
+  },
+  "reactions": {},
+  "theme": null,
+  "trayIcon": null,
+  "metadata": {
+    "description": "Bundled compatibility pack for the original PetGPT placeholder."
+  }
+}

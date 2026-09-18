@@ -4,7 +4,7 @@ public sealed class AppSettings
 {
     public int SchemaVersion { get; set; } = 2;
     public string SelectedPetId { get; set; } = "legacy";
-    public Dictionary<string, int> SelectedPackVersions { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> SelectedPackVersions { get; set; } = new(StringComparer.Ordinal);
     public string? ChatHomeUrl { get; set; }
     public PetPlacementSettings PetPlacement { get; set; } = new();
     public ChatWindowSettings ChatWindow { get; set; } = new();
@@ -20,7 +20,7 @@ public sealed class AppSettings
     {
         SchemaVersion = SchemaVersion,
         SelectedPetId = SelectedPetId,
-        SelectedPackVersions = new Dictionary<string, int>(SelectedPackVersions, StringComparer.Ordinal),
+        SelectedPackVersions = new Dictionary<string, string>(SelectedPackVersions, StringComparer.Ordinal),
         ChatHomeUrl = ChatHomeUrl,
         PetPlacement = PetPlacement.Copy(),
         ChatWindow = ChatWindow.Copy(),

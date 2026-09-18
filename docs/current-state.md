@@ -234,3 +234,73 @@ repeated Exit; second-launch behavior; Exit during WebView initialization;
 restart persistence; and Explorer restart/tray recovery. Real multi-monitor and
 mixed-DPI hardware validation remains outstanding from T3. T5 and later work
 has not started.
+
+## Post-T4 user verification
+
+After a clean Release rebuild, the user verified that the pet and tray icon
+appear; pet click and tray Show/Hide control the same persistent bubble;
+Close/Escape hide without destroying chat/login; and the disabled New PetChat,
+History, Pet, and Settings tray entries are present. Both the pet context-menu
+Exit and tray Exit terminate PetGPT and remove the tray icon. A second launch is
+rejected without creating a second pet, tray icon, browser-profile writer, or
+settings writer, and Exit during WebView initialization does not crash or hang.
+Pet position, bubble size, and ChatGPT login survive restart. Reload, Open in
+browser, resize, drag, and click-versus-drag behavior also remain working.
+
+An initially observed black WebView came from an older/stale Release output and
+did not reproduce after `dotnet clean PetGPT.csproj -c Release` followed by
+`dotnet build PetGPT.csproj -c Release`; it is not an unresolved T4 regression.
+Explorer restart recovery and real multi-monitor/mixed-DPI hardware checks
+remain unverified.
+
+## T5 validated character packs — 2026-09-18
+
+T5 adds a closed, data-only character-pack schema, strict SemVer compatibility
+at application version `2.0.0`, immutable validated snapshots, bounded persona
+and theme-token parsing, structural plus decode-verified PNG preflight, and
+explicit catalog resolution. Paths are canonicalized within the pack root.
+Traversal, absolute/drive/UNC/URI/alternate-stream paths, reparse points,
+case collisions, duplicate JSON properties, executable content, unsupported
+schemas/app versions, and all documented file/image/persona/theme limits are
+rejected with bounded diagnostic codes. Missing non-idle clip assets remain
+unavailable with a bounded warning; a usable `idle` is mandatory.
+
+`CharacterCatalog` distinguishes application-bundled packs from explicit user
+versions under `%LOCALAPPDATA%\PetGPT\Pets`. Folder and `.petpack` imports are
+fully path/size preflighted, copied into a local staging directory, validated,
+and atomically published as a new `<id>\<version>` directory. A user pack cannot
+shadow a bundled ID or replace an installed version. Failed imports remove only
+their safe staging candidate and leave installed packs untouched. Settings v2
+now stores `SelectedPackVersions` as strict SemVer strings rather than integer
+counters.
+
+The existing placeholder is also published as the bundled `legacy` pack with a
+150-DIP presentation, one held idle PNG, and no persona or reactions. The
+original `Assets/pet-placeholder.png` remains the emergency fallback and the
+current pet window still uses its pre-T5 presentation path; runtime selection
+belongs to T6.
+
+Automated evidence: the focused `CharacterPackTests` run passes 120 cases,
+including two independently named synthetic generated-image packs and the
+46 required validation/import/catalog behaviors. Additional regression cases
+cover script/executable extensions, metadata control characters, malformed
+import paths, missing-theme fallback, and decoder exceptions from structurally
+valid but unusable PNGs, ID-level junction escape attempts, terminal-newline
+grammar violations, immutable SemVer prerelease identifiers, ZIP implicit-parent
+case/type collisions, and ICO payload/header validation (including the bundled
+multi-image fallback icon). ICO PNG and supported uncompressed DIB entries are
+individually checked and decoded with budgets enforced before pixel allocation.
+The full suite passes 189 tests. `dotnet build PetGPT.csproj
+-c Release --no-restore` succeeds with 0 warnings and 0 errors. A clean Release
+publish contains `PetGPT.exe`, the legacy manifest and idle asset, both Web
+compact-mode assets, and the emergency placeholder, with no test
+assemblies/fixtures. Published metadata reports file version `2.0.0.0` and
+informational/product version `2.0.0+petgpt-v2.<commit provenance>`.
+
+The exact published `PetGPT.exe` remained alive and responsive for more than 10
+seconds with no console exception, then was stopped by the test harness. This
+is no-immediate-crash evidence only; it does not claim interactive GUI behavior.
+No T6 runtime selection, tray character menu, animation engine, persona
+activation, reaction execution, theme application, WebView/navigation change,
+or command system has been added. The complete data/install contract is in
+[`docs/contracts/character-pack-v1.md`](contracts/character-pack-v1.md).

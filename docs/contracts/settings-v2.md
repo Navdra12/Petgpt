@@ -30,7 +30,7 @@ data.
 Schema version `2` contains:
 
 - `SelectedPetId`: `legacy`;
-- `SelectedPackVersions`: empty object;
+- `SelectedPackVersions`: empty ID-to-strict-SemVer string object;
 - `ChatHomeUrl`: `null`;
 - `PetPlacement`: nullable monitor ID and nullable work-area DIP coordinates;
 - `ChatWindow`: `FollowPet`, width `500` DIP, height `650` DIP, and nullable
@@ -54,8 +54,11 @@ nearest/primary fallback and work-area clamping keep the windows usable.
 
 Inputs over 256 KiB, malformed UTF-8/JSON, duplicate or unknown properties,
 unsupported schema versions, nonfinite/implausible geometry, overlong values,
-and invalid per-pet options are rejected. A future schema is not treated as
-corrupt and is never overwritten automatically.
+invalid selected pack version strings, and invalid per-pet options are rejected.
+Selected pack versions use the same strict SemVer 2.0.0 parser as character
+pack manifests; the schema stores strings such as `"1.2.3"`, not integer
+version counters. A future schema is not treated as corrupt and is never
+overwritten automatically.
 
 `RequestSave(AppSettings)` copies and validates the supplied snapshot, then
 debounces ordinary writes for 500 ms. `FlushAsync(CancellationToken)` cancels the

@@ -2,6 +2,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using PetGPT.Characters;
 using PetGPT.Models;
 
 namespace PetGPT.Services;
@@ -334,7 +335,7 @@ public sealed class SettingsService
 
         foreach (var entry in settings.SelectedPackVersions)
         {
-            if (!IsBoundedIdentifier(entry.Key) || entry.Value < 0)
+            if (!IsBoundedIdentifier(entry.Key) || !SemanticVersion.TryParse(entry.Value, out _))
                 throw new SettingsFormatException("v2_invalid");
         }
 

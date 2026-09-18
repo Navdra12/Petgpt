@@ -26,6 +26,14 @@ Show/Hide and Exit; future feature entries are visibly disabled.
 `%LOCALAPPDATA%\PetGPT\settings.v2.json`, with the original `settings.json`
 retained as read-only migration input.
 
+`PackValidator` converts closed, data-only character-pack JSON and local image
+files into immutable validated snapshots. `CharacterCatalog` reads bundled
+packs from the application directory, resolves explicit installed versions
+under `%LOCALAPPDATA%\PetGPT\Pets`, and performs preflighted staging imports
+with atomic version-directory publication. T5 does not connect catalog entries
+to the pet window or ChatGPT; see the
+[character pack contract](docs/contracts/character-pack-v1.md).
+
 `WindowPositionService` owns Per-Monitor V2 geometry. Native monitor, cursor,
 drag, and window rectangles use physical pixels; persisted positions and WPF
 sizes use DIPs at an explicit conversion boundary. See the

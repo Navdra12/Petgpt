@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using PetGPT.Models;
 using PetGPT.Personas;
+using PetGPT.Reactions;
 
 namespace PetGPT.Services;
 
@@ -41,9 +42,14 @@ public delegate void BridgeSubmissionObservedEventHandler(
     object? sender,
     BridgeSubmissionObservation observation);
 
+public delegate void BridgeReactionObservedEventHandler(
+    object? sender,
+    BridgeReactionObservation observation);
+
 public sealed class WebViewBridge : IDisposable
 {
     public const int MaximumMessageBytes = 2048;
+    public const long MaximumSafeGenerationSerial = 9_007_199_254_740_991;
     private static readonly Regex SessionPattern = new(
         "\\A[0-9a-f]{16}\\z",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
@@ -52,6 +58,9 @@ public sealed class WebViewBridge : IDisposable
     private readonly Stopwatch? _clock;
     private double _messageTokens = 40;
     private TimeSpan _lastMessageTime;
+    private TimeSpan? _rateLimitStarted;
+    private TimeSpan? _lastRateLimit;
+    private bool _reactionsDisabledForDocument;
     private readonly object _stageGate = new();
     private PendingStage? _pendingStage;
     private bool _disposed;
@@ -74,9 +83,12 @@ public sealed class WebViewBridge : IDisposable
     public GenerationCapabilityState GenerationState { get; private set; } = GenerationCapabilityState.Unknown;
     public ComposerDraftState ComposerDraftState { get; private set; } = ComposerDraftState.Unknown;
     public BridgeDocumentIdentity? CurrentDocument => _document;
+    public bool ReactionsDisabledForDocument => _reactionsDisabledForDocument;
+    public bool ReactionCapabilityAvailable { get; private set; }
 
     public event EventHandler? StatusChanged;
     public event BridgeSubmissionObservedEventHandler? SubmissionObserved;
+    public event BridgeReactionObservedEventHandler? ReactionObserved;
 
     public BridgeDocumentIdentity BeginDocument(Uri topLevelUri, string? documentSession = null)
     {
@@ -88,7 +100,7 @@ public sealed class WebViewBridge : IDisposable
         if (!SessionPattern.IsMatch(documentSession))
             throw new ArgumentException("Document session must be sixteen lowercase hexadecimal characters.", nameof(documentSession));
         _document = new BridgeDocumentIdentity(documentSession, 0);
-        ResetRateLimit();
+        ResetRateLimit(resetReactionDegradation: true);
         ResetStatus();
         return _document;
     }
@@ -100,7 +112,7 @@ public sealed class WebViewBridge : IDisposable
             throw new InvalidOperationException("No eligible document is active.");
 
         _document = _document with { RouteRevision = checked(_document.RouteRevision + 1) };
-        ResetRateLimit();
+        ResetRateLimit(resetReactionDegradation: false);
         ResetStatus();
         return _document;
     }
@@ -181,7 +193,11 @@ public sealed class WebViewBridge : IDisposable
             return BridgeMessageResult.InvalidOrigin;
         }
         if (!TryConsumeMessageToken())
+        {
+            ObserveRateLimit();
             return BridgeMessageResult.RateLimited;
+        }
+        ClearExpiredRateLimitWindow();
 
         JsonDocument parsed;
         try
@@ -223,9 +239,36 @@ public sealed class WebViewBridge : IDisposable
             {
                 "ready" => AcceptReady(payload),
                 "activity" => AcceptActivity(payload),
+                "reaction" => AcceptReaction(payload),
                 _ => BridgeMessageResult.UnsupportedKind
             };
         }
+    }
+
+    private BridgeMessageResult AcceptReaction(JsonElement payload)
+    {
+        if (_reactionsDisabledForDocument)
+            return BridgeMessageResult.CapabilityUnavailable;
+        if (!HasExactly(payload, "href", "generationSerial", "assistantId") ||
+            !TryGetAsciiString(payload, "href", ReactionProtocol.MaximumHrefLength, out var href) ||
+            !TryGetAsciiString(payload, "assistantId", 128, out var assistantId) ||
+            assistantId.Length == 0 ||
+            !assistantId.All(character => character is >= (char)0x21 and <= (char)0x7e) ||
+            !payload.TryGetProperty("generationSerial", out var serialElement) ||
+            serialElement.ValueKind != JsonValueKind.Number ||
+            !serialElement.TryGetInt64(out var serial) || serial <= 0 || serial > MaximumSafeGenerationSerial)
+        {
+            return BridgeMessageResult.InvalidSchema;
+        }
+
+        ReactionObserved?.Invoke(
+            this,
+            new BridgeReactionObservation(
+                _document!,
+                href,
+                new GenerationSerial(serial),
+                assistantId));
+        return BridgeMessageResult.Accepted;
     }
 
     private BridgeMessageResult AcceptReady(JsonElement payload)
@@ -346,7 +389,7 @@ public sealed class WebViewBridge : IDisposable
             if (!HasExactly(payload, "event", "generationSerial") ||
                 !payload.TryGetProperty("generationSerial", out var serialElement) ||
                 serialElement.ValueKind != JsonValueKind.Number ||
-                !serialElement.TryGetInt64(out var serial) || serial <= 0)
+                !serialElement.TryGetInt64(out var serial) || serial <= 0 || serial > MaximumSafeGenerationSerial)
             {
                 return BridgeMessageResult.InvalidSchema;
             }
@@ -357,6 +400,21 @@ public sealed class WebViewBridge : IDisposable
                     _document!,
                     new GenerationSerial(serial),
                     eventName == "regenerate"));
+            return BridgeMessageResult.Accepted;
+        }
+
+        if (eventName == "reactionCapability")
+        {
+            if (!HasExactly(payload, "event", "available") ||
+                !TryGetBoolean(payload, "available", out var available))
+            {
+                return BridgeMessageResult.InvalidSchema;
+            }
+            if (ReactionCapabilityAvailable != available)
+            {
+                ReactionCapabilityAvailable = available;
+                StatusChanged?.Invoke(this, EventArgs.Empty);
+            }
             return BridgeMessageResult.Accepted;
         }
 
@@ -405,11 +463,13 @@ public sealed class WebViewBridge : IDisposable
         var changed = IsAdapterReady ||
             Capabilities != BridgeCapabilities.None ||
             GenerationState != GenerationCapabilityState.Unknown ||
-            ComposerDraftState != Models.ComposerDraftState.Unknown;
+            ComposerDraftState != Models.ComposerDraftState.Unknown ||
+            ReactionCapabilityAvailable;
         IsAdapterReady = false;
         Capabilities = BridgeCapabilities.None;
         GenerationState = GenerationCapabilityState.Unknown;
         ComposerDraftState = Models.ComposerDraftState.Unknown;
+        ReactionCapabilityAvailable = false;
         if (changed)
             StatusChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -464,10 +524,38 @@ public sealed class WebViewBridge : IDisposable
         return true;
     }
 
-    private void ResetRateLimit()
+    private void ResetRateLimit(bool resetReactionDegradation)
     {
         _messageTokens = 40;
         _lastMessageTime = _monotonicNow();
+        _rateLimitStarted = null;
+        _lastRateLimit = null;
+        if (resetReactionDegradation)
+            _reactionsDisabledForDocument = false;
+    }
+
+    private void ObserveRateLimit()
+    {
+        var now = _monotonicNow();
+        if (_lastRateLimit is null || now - _lastRateLimit.Value > TimeSpan.FromMilliseconds(250))
+            _rateLimitStarted = now;
+        _lastRateLimit = now;
+        if (!_reactionsDisabledForDocument &&
+            _rateLimitStarted is { } started &&
+            now - started >= TimeSpan.FromSeconds(2))
+        {
+            _reactionsDisabledForDocument = true;
+            StatusChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ClearExpiredRateLimitWindow()
+    {
+        if (_lastRateLimit is { } last && _monotonicNow() - last > TimeSpan.FromMilliseconds(250))
+        {
+            _rateLimitStarted = null;
+            _lastRateLimit = null;
+        }
     }
 
     private static bool HasExactly(JsonElement element, params string[] names)
@@ -510,6 +598,18 @@ public sealed class WebViewBridge : IDisposable
         return true;
     }
 
+    private static bool TryGetAsciiString(
+        JsonElement element,
+        string propertyName,
+        int maximumLength,
+        out string value)
+    {
+        value = string.Empty;
+        return TryGetBoundedString(element, propertyName, maximumLength, out var text) &&
+            text.All(character => character <= 0x7f) &&
+            (value = text) is not null;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -522,4 +622,11 @@ public sealed class WebViewBridge : IDisposable
         string RequestId,
         BridgeDocumentIdentity Document,
         TaskCompletionSource<StagePersonaResult> Completion);
+}
+
+public static class ReservedMarkerUrlPolicy
+{
+    public static bool IsExactReservedHost(string? rawUri) =>
+        Uri.TryCreate(rawUri, UriKind.Absolute, out var uri) &&
+        uri.Host.Equals("petgpt.invalid", StringComparison.OrdinalIgnoreCase);
 }

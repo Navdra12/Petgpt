@@ -1,0 +1,11 @@
+{
+  "name": "petgpt-web-bridge-tests",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "playwright test -c playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

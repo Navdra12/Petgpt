@@ -640,4 +640,74 @@ for ten seconds and was stopped by the harness. Manual persona UX verification
 remains outstanding because production currently ships only Legacy, which has
 no persona/reactions; a deliberately imported validated persona pack and local
 roleplay enablement are required to exercise Review/Copy/native-send behavior.
-T10 reaction protocol work and T11 command/settings windows have not started.
+At the T9 checkpoint, T10 reaction protocol work and T11 command/settings
+windows had not started.
+
+T10 implements the bounded reaction-link path without expanding PetGPT into a
+conversation reader. `pet-marker-bridge.js` is a separate exact-origin,
+top-frame, idempotent module. It observes only reserved marker href attributes,
+assistant structural role, bounded opaque message IDs, narrow branch visibility
+attributes, and adapter-owned submit/regenerate/generation serials. It never
+reads response text, rendered Markdown, user drafts, tool/code content, network
+bodies, storage, clipboard, or framework internals. Its 150 ms stabilization
+re-resolves the attached anchor and identities; initial/history structures,
+root-replacement clones, fully formed unseen hydration markers, stale route
+candidates, duplicate markers, ambiguous owners, code/pre/quote/tool/iframe
+markers, and noncurrent assistant structures fail closed. A live owner must be
+observed structurally for the post-submit turn before its marker, or the marker
+must first be observed ownerless and gain its assistant identity during
+stabilization. Work is capped at 200 candidates per batch and 1,000 queued; an
+overflow disconnects only reactions for the full document session while normal
+ChatGPT and Copy remain usable.
+
+`ReactionProtocol` performs full-string parsing of the original ASCII href and
+accepts only the v1 grammar, exact lowercase reserved origin, 16-lowercase-hex
+epoch, bounded IDs, optional canonical 0–100 intensity, mandatory `/end`, and a
+192-character ceiling. `ReactionValidator` rechecks the current settings,
+persona state and fingerprint, selected immutable pack and exact reaction,
+document/revision, live generation/turn, assistant identity, history flag, and
+dedupe state. Omitted intensity uses the pack default; otherwise the exact
+value chooses the highest satisfied pack band without changing `VisibleMs`.
+Only the existing `ValidatedReaction` / `PetEvent.ValidatedReactionReceived`
+path reaches animation.
+
+`ReactionLiveTurnCoordinator` is the single memory-only correlation owner.
+Native submit/regenerate allocates `TurnSerial` and feeds the existing T7
+`NativeSendObserved`; confirmed generation transitions feed
+`GenerationObserved`/`GenerationIdle`, while unavailable evidence feeds
+`GenerationUnknown`. The tightly correlated same-document project-landing to
+new-conversation revision preserves the turn; unrelated navigation, reload,
+history, pet/persona change, and stale documents invalidate it. The first valid
+activation marker is accepted in `AwaitingMarker`, moves the existing
+`PersonaSession` to `ProtocolObserved`, and may drive that same bounded reaction.
+
+The WebView host accepts a closed reaction payload containing only raw `href`,
+positive generation serial, and bounded assistant ID. Source/top-level origin,
+document identity, message size/schema, and the existing 20/s refill with burst
+40 remain authoritative. Sustained overflow for about two seconds disables
+reactions for that document without disabling chat/navigation. Exact reserved
+host navigation and new windows are cancelled, and HTTP(S) resource requests
+receive an empty local response; lookalike hosts are not blocked. Same-origin
+forgery is explicitly contained to persona acknowledgement and bounded local
+animation—never send/stage, navigation, commands, settings, selection, files,
+process launch, credentials, or exit.
+
+Automated T10 evidence: `ReactionProtocolTests` covers parser, validator,
+persona acknowledgement, live-turn/T7 mapping, stale/duplicate evidence,
+closed bridge schema, rate degradation, and reserved-host containment. The
+synthetic Playwright project contains no real conversation data and arms
+throwing `textContent`, `innerText`, and `innerHTML` getters on message surfaces;
+its 34 privacy/negative scenarios cover stabilization, streaming mutation,
+ownership/exclusions, history/root replacement, dedupe/regenerate, route
+adoption, bounds, marker visibility, teardown, and exact payload shape. The
+focused native suite passes **72/72**, the browser suite passes **39/39**,
+and the full C# suite passes **526/526**. Both production JavaScript assets pass
+`node --check`; the Release build completes with 0 warnings and 0 errors. A
+clean publish contains `PetGPT.exe`, all five production Web assets, only
+`Pets/legacy`, and the emergency placeholder, with no tests, fixtures,
+Playwright files, `node_modules`, user packs, or synthetic reaction packs. The
+exact published executable remained alive and responsive for ten seconds and
+was then stopped by the smoke harness. Manual
+end-to-end reaction animation remains unavailable with the bundled Legacy pack,
+which intentionally has no persona or reactions. T11 command/settings work has
+not started.

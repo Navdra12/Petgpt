@@ -87,6 +87,7 @@ public sealed class AppLifetime
                 _settingsService,
                 _petWindow,
                 _personaSession,
+                HandlePetEvent,
                 RequestExit);
             _bubbleWindow.IsVisibleChanged += OnBubbleVisibilityChanged;
             _trayService = new TrayService(

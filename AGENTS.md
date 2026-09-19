@@ -21,6 +21,14 @@ dotnet run
 - No OpenAI API key or API billing.
 - Do not automate login or store credentials.
 - Do not scrape, parse, or copy conversation output.
+- The sole output-inspection exception is structural reaction metadata: PetGPT
+  may inspect only reserved `https://petgpt.invalid/...` anchor `href` values,
+  assistant role, a bounded opaque assistant message ID, required current-branch
+  metadata, and structural generation/submit/regenerate occurrences. It must
+  never read response or tool text, `textContent`, `innerText`, `innerHTML`,
+  rendered Markdown, ordinary-link contents, code contents, user draft text,
+  network bodies, React internals, cookies/storage, clipboard, or the full
+  conversation DOM.
 - Use persistent WebView2 user data.
 - Compact mode is cosmetic and must fail safely.
 - Prefer semantic/ARIA/data selectors over generated CSS classes.

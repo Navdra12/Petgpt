@@ -1,7 +1,8 @@
 # Reaction link contract v1
 
-Status: draft supported by PetGPT v2 T1 live compatibility evidence dated
-2026-09-17. Production implementation is deferred to its planned task.
+Status: implemented by PetGPT v2 T10, based on T1 live compatibility evidence
+dated 2026-09-17. The compatibility assumptions remain versioned and fail
+closed when required structure is unavailable.
 
 ## Purpose and authority
 
@@ -128,6 +129,23 @@ reaction is ignored; no nearest-reaction mapping exists.
 Native guards must cancel navigation/new windows to `petgpt.invalid` and return
 an empty local response for resource requests to that exact reserved host.
 Never pass a marker href to the shell.
+
+The production host reparses the original bounded ASCII href without `Uri`
+normalization, validates the current immutable pack/persona fingerprint and
+document/route/generation/turn correlation, and emits only the existing
+`ValidatedReaction`. One in-memory coordinator accepts at most one reaction per
+document session, route revision, generation serial, and assistant message ID.
+No reaction history is persisted.
+
+The production observer is event-driven, processes no more than 200 candidates
+per scheduled batch, queues no more than 1,000, and disconnects its reaction
+capability for the full document session on overflow. It observes no
+`characterData`. A post-submit assistant owner must be observed before its
+marker, or a previously ownerless marker must gain that owner during
+stabilization; a fully formed unseen owner-plus-marker hydration is ambiguous
+history and fails closed. Recognized v1 markers alone receive an app-owned
+visibility attribute; malformed, unsupported, and ordinary links remain
+untouched.
 
 ## Compatibility result
 

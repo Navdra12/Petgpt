@@ -5,6 +5,7 @@ using Microsoft.Web.WebView2.Wpf;
 using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Personas;
+using PetGPT.Reactions;
 
 namespace PetGPT.Services;
 
@@ -67,10 +68,13 @@ public sealed class ChatWebViewService
     private bool _compactMode = true;
     private bool _themesEnabled = true;
     private bool _historyMode;
+    private bool _reactionsEnabled;
+    private bool _showControlMarkers;
     private ThemeTokens? _selectedTheme;
     private bool _navigationSubscribed;
     private int _disposeStarted;
     private string? _adapterScript;
+    private string? _markerScript;
     private string? _compactCss;
     private string? _themeBaseCss;
     private string? _injectedDocumentSession;
@@ -85,6 +89,7 @@ public sealed class ChatWebViewService
             "WebView2");
         _bridge.StatusChanged += OnBridgeStatusChanged;
         _bridge.SubmissionObserved += OnBridgeSubmissionObserved;
+        _bridge.ReactionObserved += OnBridgeReactionObserved;
     }
 
     public ChatWebViewLifecycleState State => _lifecycle.State;
@@ -100,11 +105,18 @@ public sealed class ChatWebViewService
     public event EventHandler? BridgeStatusChanged;
     public event EventHandler<PersonaChatContextChangedEventArgs>? PersonaContextChanged;
     public event BridgeSubmissionObservedEventHandler? SubmissionObserved;
+    public event BridgeReactionObservedEventHandler? ReactionObserved;
 
-    public Task InitializeAsync(bool compactMode, bool themesEnabled)
+    public Task InitializeAsync(
+        bool compactMode,
+        bool themesEnabled,
+        bool reactionsEnabled = false,
+        bool showControlMarkers = false)
     {
         _compactMode = compactMode;
         _themesEnabled = themesEnabled;
+        _reactionsEnabled = reactionsEnabled;
+        _showControlMarkers = showControlMarkers;
         return _lifecycle.InitializeAsync(InitializeCoreAsync);
     }
 
@@ -196,6 +208,7 @@ public sealed class ChatWebViewService
             UnsubscribeNavigation();
             _bridge.StatusChanged -= OnBridgeStatusChanged;
             _bridge.SubmissionObserved -= OnBridgeSubmissionObserved;
+            _bridge.ReactionObserved -= OnBridgeReactionObserved;
             _bridge.Dispose();
         }
         finally
@@ -234,6 +247,14 @@ public sealed class ChatWebViewService
             _webView.CoreWebView2.SourceChanged += OnSourceChanged;
             _webView.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
             _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            _webView.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
+            _webView.CoreWebView2.WebResourceRequested += OnWebResourceRequested;
+            _webView.CoreWebView2.AddWebResourceRequestedFilter(
+                "https://petgpt.invalid/*",
+                CoreWebView2WebResourceContext.All);
+            _webView.CoreWebView2.AddWebResourceRequestedFilter(
+                "http://petgpt.invalid/*",
+                CoreWebView2WebResourceContext.All);
             _navigationSubscribed = true;
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -256,6 +277,7 @@ public sealed class ChatWebViewService
     {
         var webRoot = Path.Combine(AppContext.BaseDirectory, "Web");
         _adapterScript = await ReadOptionalAsync(Path.Combine(webRoot, "chatgpt-adapter.js"), cancellationToken);
+        _markerScript = await ReadOptionalAsync(Path.Combine(webRoot, "pet-marker-bridge.js"), cancellationToken);
         _compactCss = await ReadOptionalAsync(Path.Combine(webRoot, "compact-chatgpt.css"), cancellationToken);
         _themeBaseCss = await ReadOptionalAsync(Path.Combine(webRoot, "theme-base.css"), cancellationToken);
     }
@@ -265,6 +287,11 @@ public sealed class ChatWebViewService
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        if (ReservedMarkerUrlPolicy.IsExactReservedHost(e.Uri))
+        {
+            e.Cancel = true;
+            return;
+        }
         DisableEnhancements();
         PersonaContextChanged?.Invoke(
             this,
@@ -380,6 +407,28 @@ public sealed class ChatWebViewService
         BridgeSubmissionObservation observation) =>
         SubmissionObserved?.Invoke(this, observation);
 
+    private void OnBridgeReactionObserved(
+        object? sender,
+        BridgeReactionObservation observation) =>
+        ReactionObserved?.Invoke(this, observation);
+
+    private static void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        if (ReservedMarkerUrlPolicy.IsExactReservedHost(e.Uri))
+            e.Handled = true;
+    }
+
+    private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        if (!ReservedMarkerUrlPolicy.IsExactReservedHost(e.Request.Uri) || _webView.CoreWebView2 is null)
+            return;
+        e.Response = _webView.CoreWebView2.Environment.CreateWebResourceResponse(
+            new MemoryStream(),
+            204,
+            "No Content",
+            "Cache-Control: no-store\r\nContent-Type: text/plain");
+    }
+
     private void RaisePersonaContextChanged()
     {
         var context = CreatePersonaChatContext();
@@ -429,6 +478,8 @@ public sealed class ChatWebViewService
             return;
         }
 
+        if (!string.IsNullOrEmpty(_markerScript))
+            await _webView.CoreWebView2.ExecuteScriptAsync(_markerScript);
         await _webView.CoreWebView2.ExecuteScriptAsync(_adapterScript);
         if (!IsCurrentSourceEligible() || _bridge.CurrentDocument != document)
             return;
@@ -491,6 +542,11 @@ public sealed class ChatWebViewService
             {
                 enabled = themeCss is not null,
                 css = themeCss
+            },
+            reaction = new
+            {
+                enabled = _reactionsEnabled && !_bridge.ReactionsDisabledForDocument,
+                showControlMarkers = _showControlMarkers
             }
         });
 
@@ -555,6 +611,8 @@ public sealed class ChatWebViewService
             _webView.CoreWebView2.SourceChanged -= OnSourceChanged;
             _webView.CoreWebView2.NavigationCompleted -= OnNavigationCompleted;
             _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+            _webView.CoreWebView2.NewWindowRequested -= OnNewWindowRequested;
+            _webView.CoreWebView2.WebResourceRequested -= OnWebResourceRequested;
         }
         _navigationSubscribed = false;
     }

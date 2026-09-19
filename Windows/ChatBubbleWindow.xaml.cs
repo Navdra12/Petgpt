@@ -4,6 +4,7 @@ using System.Windows.Input;
 using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Personas;
+using PetGPT.Reactions;
 using PetGPT.Services;
 using WpfButton = System.Windows.Controls.Button;
 using WpfGrid = System.Windows.Controls.Grid;
@@ -22,6 +23,8 @@ public partial class ChatBubbleWindow : Window
     private readonly ChatWebViewService _chatService;
     private readonly ChatNavigationService _navigationService;
     private readonly PersonaSession _personaSession;
+    private readonly ReactionLiveTurnCoordinator _reactionCoordinator = new();
+    private readonly Action<PetEvent> _petEvent;
     private readonly Action _exitRequested;
     private readonly double _normalMinWidthDip;
     private readonly double _normalMinHeightDip;
@@ -31,12 +34,14 @@ public partial class ChatBubbleWindow : Window
     private bool _allowClose;
     private bool _appShuttingDown;
     private Task? _browserInitializationTask;
+    private CharacterPack? _selectedPack;
 
     public ChatBubbleWindow(
         AppSettings settings,
         SettingsService settingsService,
         Window pet,
         PersonaSession personaSession,
+        Action<PetEvent> petEvent,
         Action exitRequested)
     {
         InitializeComponent();
@@ -45,6 +50,7 @@ public partial class ChatBubbleWindow : Window
         _settingsService = settingsService;
         _pet = pet;
         _personaSession = personaSession ?? throw new ArgumentNullException(nameof(personaSession));
+        _petEvent = petEvent ?? throw new ArgumentNullException(nameof(petEvent));
         _exitRequested = exitRequested;
         _normalMinWidthDip = MinWidth;
         _normalMinHeightDip = MinHeight;
@@ -62,6 +68,7 @@ public partial class ChatBubbleWindow : Window
         _chatService.BridgeStatusChanged += OnBridgeStatusChanged;
         _chatService.PersonaContextChanged += OnPersonaContextChanged;
         _chatService.SubmissionObserved += OnSubmissionObserved;
+        _chatService.ReactionObserved += OnReactionObserved;
         _personaSession.StatusChanged += OnPersonaStatusChanged;
 
         var configured = _navigationService.HasConfiguredHome;
@@ -93,6 +100,8 @@ public partial class ChatBubbleWindow : Window
     {
         ArgumentNullException.ThrowIfNull(pack);
         _chatService.SetSelectedTheme(_settings.ThemesEnabled ? pack.Theme : null);
+        _selectedPack = pack;
+        _reactionCoordinator.Invalidate();
         _personaSession.SelectPack(pack);
     }
 
@@ -123,7 +132,11 @@ public partial class ChatBubbleWindow : Window
     {
         try
         {
-            await _chatService.InitializeAsync(_settings.CompactMode, _settings.ThemesEnabled);
+            await _chatService.InitializeAsync(
+                _settings.CompactMode,
+                _settings.ThemesEnabled,
+                _settings.ReactionsEnabled,
+                _settings.ShowControlMarkers);
         }
         catch (OperationCanceledException) when (_appShuttingDown)
         {
@@ -287,6 +300,8 @@ public partial class ChatBubbleWindow : Window
             _chatService.GenerationState,
             _chatService.ComposerDraftState);
         _personaSession.ObserveGeneration(_chatService.GenerationState);
+        if (_reactionCoordinator.ObserveGeneration(_chatService.GenerationState) is { } petEvent)
+            _petEvent(petEvent);
         if (_chatService.CurrentDocument is not null && _chatService.IsAdapterReady)
             _personaSession.ObserveSubmissionCapability(_chatService.BridgeCapabilities.Submission);
     }
@@ -294,13 +309,70 @@ public partial class ChatBubbleWindow : Window
     private void OnPersonaContextChanged(object? sender, PersonaChatContextChangedEventArgs e)
     {
         if (e.Invalidated)
+        {
+            _reactionCoordinator.Invalidate();
             _personaSession.InvalidateDocument();
+            _petEvent(new PetEvent.RouteInvalidated());
+        }
         else if (e.Context is not null)
+        {
+            var priorDocument = _reactionCoordinator.CurrentDocument;
             _personaSession.ObserveContext(e.Context);
+            if (priorDocument is not null && e.Context.Document is { } nextDocument && nextDocument != priorDocument)
+            {
+                if (_personaSession.State is not (PersonaSessionState.AwaitingMarker or PersonaSessionState.ProtocolObserved) ||
+                    !_reactionCoordinator.TryAdvanceRoute(nextDocument))
+                {
+                    _reactionCoordinator.Invalidate();
+                    _petEvent(new PetEvent.RouteInvalidated());
+                }
+            }
+        }
     }
 
-    private void OnSubmissionObserved(object? sender, BridgeSubmissionObservation observation) =>
+    private void OnSubmissionObserved(object? sender, BridgeSubmissionObservation observation)
+    {
         _personaSession.ObserveSubmission(observation);
+        _petEvent(_reactionCoordinator.ObserveSubmission(observation));
+    }
+
+    private void OnReactionObserved(object? sender, BridgeReactionObservation observation)
+    {
+        if (!_settings.ReactionsEnabled ||
+            _selectedPack is null ||
+            _chatService.CurrentDocument is null ||
+            !ReactionProtocol.TryParse(observation.Href, out var marker) ||
+            marker is null ||
+            !_reactionCoordinator.TryCorrelate(observation, out var correlation))
+        {
+            return;
+        }
+
+        var validation = new ReactionValidationContext(
+            _settings.ReactionsEnabled,
+            _selectedPack,
+            _personaSession.State,
+            _personaSession.Context,
+            _chatService.CurrentDocument,
+            correlation,
+            _reactionCoordinator.CurrentGeneration);
+        if (!ReactionValidator.TryValidate(marker, validation, out var reaction) || reaction is null)
+            return;
+
+        if (_personaSession.State == PersonaSessionState.AwaitingMarker &&
+            !_personaSession.ObserveProtocol(new TrustedProtocolObservation(
+                marker.Epoch,
+                marker.PetId,
+                observation.Document)))
+        {
+            return;
+        }
+        if (_personaSession.State != PersonaSessionState.ProtocolObserved)
+            return;
+
+        _reactionCoordinator.Commit(correlation);
+        _petEvent(new PetEvent.ValidatedReactionReceived(reaction));
+    }
 
     private void OnPersonaStatusChanged(object? sender, EventArgs e) => RefreshPersonaUi();
 
@@ -427,6 +499,7 @@ public partial class ChatBubbleWindow : Window
         _chatService.BridgeStatusChanged -= OnBridgeStatusChanged;
         _chatService.PersonaContextChanged -= OnPersonaContextChanged;
         _chatService.SubmissionObserved -= OnSubmissionObserved;
+        _chatService.ReactionObserved -= OnReactionObserved;
         _personaSession.StatusChanged -= OnPersonaStatusChanged;
         await _chatService.DisposeAsync();
     }

@@ -38,7 +38,8 @@
     composerEmptySupported: false,
     generationSerial: 0,
     submissionQueued: false,
-    listenersAttached: false
+    listenersAttached: false,
+    routeKind: null
   };
 
   const post = (kind, payload) => {
@@ -101,6 +102,9 @@
     if (next !== state.lastGeneration) {
       state.lastGeneration = next;
       post("activity", { event: "generation", state: next });
+      if (state.generationSerial > 0) {
+        window.__petgptMarkerBridgeV1?.observeGeneration?.(next, state.generationSerial);
+      }
     }
   };
 
@@ -122,6 +126,7 @@
   const emitSubmission = (eventName) => {
     if (!state.active || !state.configured || state.degraded) return;
     state.generationSerial += 1;
+    window.__petgptMarkerBridgeV1?.observeTurn?.(state.generationSerial);
     post("activity", { event: eventName, generationSerial: state.generationSerial });
   };
 
@@ -262,7 +267,7 @@
     if (document.body) state.rootObserver.observe(document.body, { childList: true });
   };
 
-  const resetForIdentity = () => {
+  const resetForIdentity = (preserveLiveTurn) => {
     state.generationWasSeen = false;
     state.lastGeneration = null;
     state.lastCapabilitiesKey = null;
@@ -273,7 +278,7 @@
     state.controlObserver?.disconnect();
     state.rootObserver = null;
     state.controlObserver = null;
-    state.generationSerial = 0;
+    if (!preserveLiveTurn) state.generationSerial = 0;
     state.submissionQueued = false;
   };
 
@@ -328,16 +333,30 @@
     const identityChanged =
       message.documentSession !== state.documentSession ||
       message.routeRevision !== state.routeRevision;
-    if (identityChanged) resetForIdentity();
+    const preserveLiveTurn = identityChanged &&
+      message.documentSession === state.documentSession &&
+      message.routeRevision === state.routeRevision + 1 &&
+      state.routeKind === "ProjectLanding" &&
+      message.routeKind === "ProjectConversation";
+    if (identityChanged) resetForIdentity(preserveLiveTurn);
 
     state.configured = true;
     state.documentSession = message.documentSession;
     state.routeRevision = message.routeRevision;
+    state.routeKind = message.routeKind;
     state.allowSafeComposerEmpty = message.composer?.allowSafeEmpty === true;
     document.documentElement.setAttribute("data-petgpt-compact", message.compact?.enabled ? "true" : "false");
     document.documentElement.setAttribute("data-petgpt-history", message.historyMode ? "true" : "false");
     setStyle("petgpt-compact-style", message.compact?.enabled ? message.compact.css : null);
     setStyle("petgpt-theme-style", message.theme?.enabled ? message.theme.css : null);
+    window.__petgptMarkerBridgeV1?.reconfigure?.({
+      documentSession: message.documentSession,
+      routeRevision: message.routeRevision,
+      routeKind: message.routeKind,
+      preserveLiveTurn,
+      enabled: message.reaction?.enabled === true,
+      showControlMarkers: message.reaction?.showControlMarkers === true
+    });
 
     // An overflow is sticky for its identity. A later configuration may update
     // style text, but cannot silently re-enable selectors for that route.

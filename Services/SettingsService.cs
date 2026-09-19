@@ -340,11 +340,7 @@ public sealed class SettingsService
         }
 
         if (settings.ChatHomeUrl is { } home &&
-            (home.Length > 2048 || !Uri.TryCreate(home, UriKind.Absolute, out var uri) ||
-             uri.Scheme != Uri.UriSchemeHttps ||
-             !string.IsNullOrEmpty(uri.UserInfo) ||
-             !(uri.Host.Equals("chatgpt.com", StringComparison.OrdinalIgnoreCase) ||
-               uri.Host.EndsWith(".chatgpt.com", StringComparison.OrdinalIgnoreCase))))
+            !ChatNavigationUrlPolicy.TryValidateHome(home, out _))
         {
             throw new SettingsFormatException("v2_invalid");
         }

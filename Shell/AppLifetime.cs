@@ -77,20 +77,21 @@ public sealed class AppLifetime
                 ApplyPreparedSelection,
                 _settingsService.RequestSave);
             _petSelectionService.SelectionChanged += OnSelectionChanged;
-            _trayService = new TrayService(
-                ToggleChat,
-                RequestExit,
-                catalogResult.Packs,
-                SelectPetAsync);
-            _trayService.SetChatVisible(false);
-            await _petSelectionService.InitializeAsync(CancellationToken.None);
-
             _bubbleWindow = new ChatBubbleWindow(
                 _settings,
                 _settingsService,
                 _petWindow,
                 RequestExit);
             _bubbleWindow.IsVisibleChanged += OnBubbleVisibilityChanged;
+            _trayService = new TrayService(
+                ToggleChat,
+                RequestExit,
+                catalogResult.Packs,
+                SelectPetAsync,
+                NavigateChatAsync,
+                _bubbleWindow.HasConfiguredPetChatsHome);
+            _trayService.SetChatVisible(false);
+            await _petSelectionService.InitializeAsync(CancellationToken.None);
             HandlePetEvent(new PetEvent.ChatVisibilityChanged(false));
 
             _application.MainWindow = _petWindow;
@@ -124,6 +125,7 @@ public sealed class AppLifetime
 
     private void OnSelectionChanged(object? sender, PetSelectionChangedEventArgs e)
     {
+        _bubbleWindow?.ApplySelectedPack(e.Pack);
         if (_animationPlayer is null || _settings is null)
             return;
 
@@ -209,15 +211,36 @@ public sealed class AppLifetime
         }
         else
         {
-            var monitors = _petWindow.CurrentMonitors.Count > 0
-                ? _petWindow.CurrentMonitors
-                : WindowPositionService.GetMonitors();
-            _bubbleWindow.PreparePlacement(monitors);
-            _bubbleWindow.Show();
-            _bubbleWindow.Activate();
+            ShowChat();
         }
 
         _trayService?.SetChatVisible(_bubbleWindow.IsVisible);
+    }
+
+    private async Task<NavigationResult> NavigateChatAsync(NavigationIntent intent)
+    {
+        if (_shutdown is not { AcceptsIntents: true } ||
+            _bubbleWindow is null ||
+            _petWindow is null)
+        {
+            return NavigationResult.Unavailable;
+        }
+
+        if (!_bubbleWindow.IsVisible)
+            ShowChat();
+        return await _bubbleWindow.NavigateAsync(intent);
+    }
+
+    private void ShowChat()
+    {
+        if (_bubbleWindow is null || _petWindow is null)
+            return;
+        var monitors = _petWindow.CurrentMonitors.Count > 0
+            ? _petWindow.CurrentMonitors
+            : WindowPositionService.GetMonitors();
+        _bubbleWindow.PreparePlacement(monitors);
+        _bubbleWindow.Show();
+        _bubbleWindow.Activate();
     }
 
     public void RequestExit()

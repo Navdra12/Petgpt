@@ -1,0 +1,8 @@
+/* App-owned structural theme layer. Tokens and colors are host-generated. */
+[data-petgpt-surface="page"] {
+  min-height: 100%;
+}
+
+[data-petgpt-surface="composer"] {
+  position: relative;
+}

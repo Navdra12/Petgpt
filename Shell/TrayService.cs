@@ -1,5 +1,6 @@
 using System.Reflection;
 using PetGPT.Characters;
+using PetGPT.Models;
 using DrawingIcon = System.Drawing.Icon;
 using Forms = System.Windows.Forms;
 
@@ -11,9 +12,12 @@ public sealed class TrayService : IDisposable
 
     private readonly Action _toggleChat;
     private readonly Action _exit;
+    private readonly Func<NavigationIntent, Task<NavigationResult>> _navigateAsync;
     private readonly Func<string, string, Task<PetSelectionResult>> _selectPetAsync;
     private readonly Forms.ContextMenuStrip _menu;
     private readonly Forms.ToolStripMenuItem _showHideChat;
+    private readonly Forms.ToolStripMenuItem _newPetChat;
+    private readonly Forms.ToolStripMenuItem _history;
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly TrayPetMenuState _petMenuState;
     private readonly Dictionary<(string Id, string Version), Forms.ToolStripMenuItem> _petItems = [];
@@ -24,22 +28,38 @@ public sealed class TrayService : IDisposable
         Action toggleChat,
         Action exit,
         IReadOnlyList<CharacterPack> packs,
-        Func<string, string, Task<PetSelectionResult>> selectPetAsync)
+        Func<string, string, Task<PetSelectionResult>> selectPetAsync,
+        Func<NavigationIntent, Task<NavigationResult>> navigateAsync,
+        bool hasConfiguredPetChatsHome)
     {
         _toggleChat = toggleChat ?? throw new ArgumentNullException(nameof(toggleChat));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
         _selectPetAsync = selectPetAsync ?? throw new ArgumentNullException(nameof(selectPetAsync));
+        _navigateAsync = navigateAsync ?? throw new ArgumentNullException(nameof(navigateAsync));
         _petMenuState = new TrayPetMenuState(packs ?? throw new ArgumentNullException(nameof(packs)));
         _iconSlot = new OwnedResourceSlot<DrawingIcon>(LoadFallbackIcon());
 
         _showHideChat = new Forms.ToolStripMenuItem("Show ChatGPT");
         _showHideChat.Click += OnToggleChat;
 
+        _newPetChat = new Forms.ToolStripMenuItem(
+            hasConfiguredPetChatsHome ? "New PetChat" : "New PetChat — PetChats not configured")
+        {
+            Enabled = hasConfiguredPetChatsHome
+        };
+        _newPetChat.Click += OnNewPetChat;
+        _history = new Forms.ToolStripMenuItem(
+            hasConfiguredPetChatsHome ? "History" : "History — PetChats not configured")
+        {
+            Enabled = hasConfiguredPetChatsHome
+        };
+        _history.Click += OnHistory;
+
         _menu = new Forms.ContextMenuStrip();
         _menu.Items.Add(_showHideChat);
         _menu.Items.Add(new Forms.ToolStripSeparator());
-        _menu.Items.Add(CreateUnavailableItem("New PetChat — unavailable"));
-        _menu.Items.Add(CreateUnavailableItem("History — unavailable"));
+        _menu.Items.Add(_newPetChat);
+        _menu.Items.Add(_history);
         _menu.Items.Add(CreatePetMenu());
         _menu.Items.Add(CreateUnavailableItem("Settings — unavailable"));
         _menu.Items.Add(new Forms.ToolStripSeparator());
@@ -96,6 +116,8 @@ public sealed class TrayService : IDisposable
         _notifyIcon.Visible = false;
         _notifyIcon.DoubleClick -= OnToggleChat;
         _showHideChat.Click -= OnToggleChat;
+        _newPetChat.Click -= OnNewPetChat;
+        _history.Click -= OnHistory;
         foreach (var item in _petItems.Values)
             item.Click -= OnSelectPet;
         _notifyIcon.Dispose();
@@ -144,6 +166,34 @@ public sealed class TrayService : IDisposable
     }
 
     private void OnToggleChat(object? sender, EventArgs e) => _toggleChat();
+
+    private async void OnNewPetChat(object? sender, EventArgs e)
+    {
+        if (_disposed)
+            return;
+        try
+        {
+            await _navigateAsync(NavigationIntent.NewPetChat);
+        }
+        catch
+        {
+            // Navigation owner retains the current page on failure.
+        }
+    }
+
+    private async void OnHistory(object? sender, EventArgs e)
+    {
+        if (_disposed)
+            return;
+        try
+        {
+            await _navigateAsync(NavigationIntent.History);
+        }
+        catch
+        {
+            // Navigation owner retains the current page on failure.
+        }
+    }
 
     private void OnExit(object? sender, EventArgs e) => _exit();
 

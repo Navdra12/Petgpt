@@ -48,6 +48,47 @@ public readonly record struct GenerationSerial(long Value);
 
 public readonly record struct TurnSerial(long Value);
 
+public enum ChatRouteKind
+{
+    Unrelated,
+    ChatRoot,
+    ProjectLanding,
+    ProjectConversation,
+    Authentication,
+    UnknownChatGpt
+}
+
+public enum NavigationIntent
+{
+    Home,
+    NewPetChat,
+    History,
+    OpenInBrowser
+}
+
+public enum NavigationResult
+{
+    Navigated,
+    AlreadyAtTarget,
+    Stayed,
+    InvalidHome,
+    Unavailable
+}
+
+public enum ComposerDraftState
+{
+    Unknown,
+    Empty,
+    NonEmpty
+}
+
+public enum GenerationCapabilityState
+{
+    Unknown,
+    Idle,
+    Generating
+}
+
 public enum ChatActivity
 {
     Unknown,

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
+using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Services;
 
@@ -12,6 +13,7 @@ public partial class ChatBubbleWindow : Window
     private readonly SettingsService _settingsService;
     private readonly Window _pet;
     private readonly ChatWebViewService _chatService;
+    private readonly ChatNavigationService _navigationService;
     private readonly Action _exitRequested;
     private readonly double _normalMinWidthDip;
     private readonly double _normalMinHeightDip;
@@ -20,6 +22,7 @@ public partial class ChatBubbleWindow : Window
     private bool _applyingGeometry;
     private bool _allowClose;
     private bool _appShuttingDown;
+    private Task? _browserInitializationTask;
 
     public ChatBubbleWindow(
         AppSettings settings,
@@ -39,7 +42,19 @@ public partial class ChatBubbleWindow : Window
         Width = settings.ChatWindow.WidthDip;
         Height = settings.ChatWindow.HeightDip;
 
-        _chatService = new ChatWebViewService(ChatWebView);
+        _chatService = new ChatWebViewService(ChatWebView, settings.ChatHomeUrl);
+        _navigationService = new ChatNavigationService(
+            settings.ChatHomeUrl,
+            () => _chatService.CurrentUri,
+            uri => _chatService.Navigate(uri),
+            ConfirmLeaveAsync);
+        _chatService.SourceChanged += OnChatSourceChanged;
+        _chatService.BridgeStatusChanged += OnBridgeStatusChanged;
+
+        var configured = _navigationService.HasConfiguredHome;
+        NewPetChatButton.IsEnabled = configured;
+        HistoryButton.IsEnabled = configured;
+        PetChatsStatusText.Text = configured ? string.Empty : "PetChats not configured";
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
@@ -55,14 +70,45 @@ public partial class ChatBubbleWindow : Window
         if (_settings.ChatWindow.PlacementMode != "FollowPet")
             PersistFreePlacement();
 
-        _ = InitializeBrowserWithErrorHandlingAsync();
+        _ = EnsureBrowserInitializedAsync();
     }
+
+    public bool HasConfiguredPetChatsHome => _navigationService.HasConfiguredHome;
+
+    public void ApplySelectedPack(CharacterPack pack)
+    {
+        ArgumentNullException.ThrowIfNull(pack);
+        _chatService.SetSelectedTheme(_settings.ThemesEnabled ? pack.Theme : null);
+    }
+
+    public async Task<NavigationResult> NavigateAsync(NavigationIntent intent)
+    {
+        if (_appShuttingDown)
+            return NavigationResult.Unavailable;
+        if ((intent is NavigationIntent.NewPetChat or NavigationIntent.History) &&
+            !_navigationService.HasConfiguredHome)
+        {
+            PetChatsStatusText.Text = "PetChats not configured";
+            return NavigationResult.InvalidHome;
+        }
+
+        await EnsureBrowserInitializedAsync();
+        if (_chatService.State != ChatWebViewLifecycleState.Ready)
+            return NavigationResult.Unavailable;
+
+        var result = await _navigationService.NavigateAsync(intent, CancellationToken.None);
+        _chatService.SetHistoryMode(_navigationService.HistoryMode);
+        return result;
+    }
+
+    private Task EnsureBrowserInitializedAsync() =>
+        _browserInitializationTask ??= InitializeBrowserWithErrorHandlingAsync();
 
     private async Task InitializeBrowserWithErrorHandlingAsync()
     {
         try
         {
-            await _chatService.InitializeAsync(_settings.CompactMode);
+            await _chatService.InitializeAsync(_settings.CompactMode, _settings.ThemesEnabled);
         }
         catch (OperationCanceledException) when (_appShuttingDown)
         {
@@ -187,9 +233,44 @@ public partial class ChatBubbleWindow : Window
 
         Process.Start(new ProcessStartInfo
         {
-            FileName = "https://chatgpt.com/",
+            FileName = _navigationService.ResolveExternalBrowserUri().AbsoluteUri,
             UseShellExecute = true
         });
+    }
+
+    private async void OnNewPetChat(object sender, RoutedEventArgs e)
+    {
+        await NavigateAsync(NavigationIntent.NewPetChat);
+    }
+
+    private async void OnHistory(object sender, RoutedEventArgs e)
+    {
+        await NavigateAsync(NavigationIntent.History);
+    }
+
+    private Task<bool> ConfirmLeaveAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var answer = System.Windows.MessageBox.Show(
+            "ChatGPT may be generating a response or contain an unsent draft. Choose Yes to Leave, or No to Stay.",
+            "Leave this chat?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        return Task.FromResult(answer == MessageBoxResult.Yes);
+    }
+
+    private void OnChatSourceChanged(object? sender, ChatSourceChangedEventArgs e)
+    {
+        _navigationService.ObserveSource(e.Source);
+        _chatService.SetHistoryMode(_navigationService.HistoryMode);
+    }
+
+    private void OnBridgeStatusChanged(object? sender, EventArgs e)
+    {
+        _navigationService.UpdateGuardState(
+            _chatService.GenerationState,
+            _chatService.ComposerDraftState);
     }
 
     private void OnReload(object sender, RoutedEventArgs e)
@@ -216,7 +297,12 @@ public partial class ChatBubbleWindow : Window
         _chatService.BeginShutdown();
     }
 
-    public Task DisposeBrowserAsync() => _chatService.DisposeAsync();
+    public async Task DisposeBrowserAsync()
+    {
+        _chatService.SourceChanged -= OnChatSourceChanged;
+        _chatService.BridgeStatusChanged -= OnBridgeStatusChanged;
+        await _chatService.DisposeAsync();
+    }
 
     public void CloseForAppShutdown()
     {

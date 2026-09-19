@@ -1,4 +1,4 @@
 (() => {
-  // Reserved for future UI-only adjustments.
-  // Do not scrape, copy, parse, or re-render ChatGPT conversation output.
+  // Compatibility stub retained for older publish layouts. The versioned
+  // app-owned adapter now owns all idempotent compact/style configuration.
 })();

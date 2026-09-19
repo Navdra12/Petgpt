@@ -448,6 +448,126 @@ animation of a real production character cannot yet be claimed. Native Windows
 UI automation was unavailable in this run; interactive confirmation that the
 published Legacy pet remains visually unchanged, has no jitter, and preserves
 drag, click/show/hide, tray Legacy check, and normal Exit remains manual. The
-process smoke is not evidence for those GUI paths. T8 navigation/theme work,
-WebView activity sourcing, persona sessions, marker parsing/validation, and
-ChatGPT DOM observation have not started.
+process smoke is not evidence for those GUI paths. Persona sessions,
+marker parsing/validation, and reaction observation have not started.
+
+The subsequent user-operated T7 clean-publish smoke passed **6/6**: Legacy
+appearance remained unchanged and jitter-free; drag remained smooth; click and
+tray Show/Hide worked; tray Pet -> Legacy remained checked; ChatGPT login and
+the current session were preserved through pet interactions; and tray Exit
+terminated normally and removed the tray icon.
+
+## T8 safe PetChats navigation and layered appearance — 2026-09-19
+
+T8 makes `ChatNavigationUrlPolicy` the single strict owner of ChatGPT URLs.
+Configured homes must be at most 2,048 characters, absolute HTTPS, exact-host
+`chatgpt.com`, default-port, without userinfo/query/fragment/control characters
+or malformed escapes, and must classify as the opaque
+`/g/:opaque/project` landing route. Root, authentication, share, global or
+project conversation, lookalike/subdomain, nondefault-port, and unknown route
+classes are rejected as configured homes. No actual user project URL is stored
+in source, tests, docs, or published defaults.
+
+The existing lazy WebView now resolves the configured home before WebView2 is
+initialized. Its first navigation is that exact validated home, or
+`https://chatgpt.com/` when home is null/invalid; there is no hidden root-first
+navigation. Show/Hide retains the page, login, current conversation, and native
+draft, while Reload reloads the current page. `New PetChat` navigates directly
+to the configured project landing page and waits for the user's ordinary
+native submission; it never invokes the global New chat control, fabricates a
+conversation URL, inserts text, or submits a prompt. `History` uses the same
+project landing page as a view intent and exposes the native list rather than
+maintaining or scraping a local history. Tray and chat-chrome New/History
+actions are enabled only with a valid home; otherwise they truthfully show
+`PetChats not configured` and perform no fake global action.
+
+Routes are classified as unrelated, root, project landing, project
+conversation, authentication, or unknown ChatGPT. Before New/History abandons
+a different page, confirmed generation or a known nonempty draft prompts to
+Leave or Stay. A known-empty draft with idle/unknown generation does not prompt.
+Because the tested live site still has no privacy-safe composer-empty signal,
+production draft state remains **UNKNOWN** and therefore prompts
+conservatively. No draft text, `textContent`, `innerText`, HTML, clipboard,
+selection, response body, conversation output, cookie/storage, or React
+internal is read.
+
+`WebViewBridge` is a T8-only versioned capability/status shell. Each eligible
+document receives a bounded 16-hex session and route revision; full navigation
+invalidates the prior document, SPA source changes advance revision, and stale
+messages are rejected. The host requires both message source and current
+top-level source to be exact eligible ChatGPT HTTPS pages, rejects
+authentication/unrelated pages, messages over 2 KiB, excessive nesting,
+unknown properties/kinds, invalid enum values, stale identities, unsupported
+capability events, and bursts beyond 40 with a 20-message/second refill. Page
+events can report only adapter readiness/capabilities, generation state, and a
+capability-gated composer boolean. They cannot invoke native commands,
+navigate, select pets, write settings, open URLs, send prompts, or exit, and no
+.NET host objects are exposed.
+
+The app-bundled `chatgpt-adapter.js` requires top-frame exact origin, installs
+idempotently, supports teardown/reconfiguration, and uses narrow top-level
+root-replacement and composer-control observers without `characterData` or
+response scanning. Capability messages are deduplicated, a mutation batch over
+200 disables observation for that route identity, and a new route revision
+starts with fresh capability and generation state. Losing eligibility tears
+down owned styles/attributes and disables messages; a same-document return from
+an authentication route establishes a fresh host identity and reattaches.
+The observed `stop-button` structural signal reports `generating`; absence is
+`unknown` until a generating signal has actually been seen, after which
+disappearance may report `idle`. Composer-empty capability remains false in
+production. Adapter reload creates a new document context and host identity.
+Authentication and unrelated pages receive no bridge, compact, or theme
+injection and remain usable for normal login/navigation.
+
+Appearance now consists of independently removable native, compact, and theme
+layers. The blanket `aside { display:none }` rule is gone. Compact mode uses
+only app-owned attributes on semantic landmarks, deliberately reports native
+navigation suppression unavailable until a compatible selector is live-tested,
+and is relaxed on project landing/History. Missing landmarks fail open with the
+native page readable. Compact and theme preferences remain independent and
+repeated configuration is idempotent.
+
+`ThemeService` consumes only the active immutable pack's validated closed token
+object and defensively rechecks all nine hex colors and four integer metrics.
+It emits app-owned CSS only when the adapter has both sides of the required
+foreground/background pair. Packs supply no CSS, selectors, scripts, fonts, or
+URLs. Optional local decoration PNGs are capped at 2 MiB, decoded and re-encoded
+by the host into an in-memory data URI, applied pointer-events-none, and omitted
+without losing otherwise safe solid theme colors on any failure. The production
+adapter currently exposes the composer foreground/background pair on the same
+verified editable element plus scrollbar styling. It deliberately reports the
+page and secondary color pairs unavailable because native descendants can own
+unverified colors, so page colors and decoration are skipped rather than risk
+an unreadable partial theme. Legacy has no theme, so its theme layer is absent.
+A successful T6 `SelectionChanged` updates only the theme layer without WebView
+recreation, navigation, Reload, persona work, or reaction; a no-theme pack
+removes the prior theme and failed selection emits no change.
+
+Automated T8 evidence: `NavigationAndCommandsTests` passes **96/96** cases and
+the full suite passes **359/359**. Tests cover strict URL/home validation,
+typed routes, first-target/show-hide/reload semantics, New/History and guard
+behavior, exact-origin and stale-document bridge rejection, closed schemas and
+rate limits, capability revocation, unknown composer/generation behavior,
+source-transition policy, synthetic capability/root revision/history/
+missing-selector fixtures, independent idempotent style layers,
+token/decoration safety, pack-switch isolation, and safe external URL selection.
+The executable offline adapter fixtures pass **5/5** for SPA generation reset,
+bounded/deduplicated observation, sticky overflow degradation, conservative
+surface pairing, and root replacement. `node --check Web/chatgpt-adapter.js`
+passed. `dotnet build
+PetGPT.csproj -c Release` succeeded with 0 warnings and 0 errors. A clean
+Release publish contains `PetGPT.exe`, all four Web assets, only bundled
+`Pets/legacy`, and the emergency placeholder, with no test fixture leakage.
+The exact `artifacts/publish/PetGPT.exe` remained alive and responsive for ten
+seconds and was then stopped by the harness.
+
+The automated fixtures exercise the native host contracts rather than running
+an authenticated browser page; no browser framework was added solely for T8.
+User-operated clean-publish verification is still required for: configured
+first open; Show/Hide preservation; direct-home New PetChat followed by native
+submission and project conversation creation; History/native list visibility;
+proof that global New chat is never invoked; conservative Stay/Leave behavior;
+Reload reattachment; normal login; compact readability of project/history
+controls; Open in browser; and live theme apply/remove when a validated themed
+pack is available. T9 persona construction/staging, T10 reaction semantics,
+and T11 command/settings windows have not started.

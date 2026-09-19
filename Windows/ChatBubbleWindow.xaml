@@ -23,13 +23,37 @@
             </Grid.RowDefinitions>
 
             <Grid Grid.Row="0" Background="#EEEEEE">
-                <TextBlock Text="PetGPT"
-                           VerticalAlignment="Center"
-                           Margin="12,0,0,0"
-                           FontWeight="SemiBold"/>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0"
+                      VerticalAlignment="Center"
+                      Margin="12,0,4,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="PetGPT"
+                               FontWeight="SemiBold"/>
+                    <TextBlock x:Name="PetChatsStatusText"
+                               Grid.Column="1"
+                               Margin="8,0,0,0"
+                               Foreground="#666666"
+                               FontSize="11"
+                               TextTrimming="CharacterEllipsis"/>
+                </Grid>
 
                 <StackPanel Orientation="Horizontal"
+                            Grid.Column="1"
                             HorizontalAlignment="Right">
+                    <Button x:Name="NewPetChatButton"
+                            Content="New" Width="44" BorderThickness="0"
+                            ToolTip="New PetChat" Click="OnNewPetChat"/>
+                    <Button x:Name="HistoryButton"
+                            Content="History" Width="54" BorderThickness="0"
+                            ToolTip="PetChats history" Click="OnHistory"/>
                     <Button Content="↗" Width="36" BorderThickness="0"
                             ToolTip="Open in browser" Click="OnOpenBrowser"/>
                     <Button Content="↻" Width="36" BorderThickness="0"

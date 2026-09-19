@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Windows.Media.Imaging;
+using PetGPT.Animation;
 using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Services;
@@ -14,6 +17,7 @@ public sealed class AppLifetime
     private static readonly TimeSpan SessionEndingWaitTimeout = TimeSpan.FromSeconds(4);
 
     private readonly System.Windows.Application _application;
+    private readonly Stopwatch _animationClock = Stopwatch.StartNew();
     private SingleInstanceGuard? _instanceGuard;
     private SettingsService? _settingsService;
     private AppSettings? _settings;
@@ -21,6 +25,10 @@ public sealed class AppLifetime
     private ChatBubbleWindow? _bubbleWindow;
     private TrayService? _trayService;
     private PetSelectionService? _petSelectionService;
+    private AnimationStateEngine? _animationEngine;
+    private PetAnimationPlayer? _animationPlayer;
+    private BitmapSource? _preparedAnimationIdle;
+    private string? _preparedAnimationPackKey;
     private AppShutdownCoordinator? _shutdown;
 
     public AppLifetime(System.Windows.Application application)
@@ -55,13 +63,20 @@ public sealed class AppLifetime
                 _settings,
                 ToggleChat,
                 RequestExit,
-                RepositionVisibleBubble);
+                RepositionVisibleBubble,
+                HandlePetEvent);
+            _animationPlayer = new PetAnimationPlayer(
+                _petWindow.AnimationSurface,
+                () => _animationClock.Elapsed,
+                OnAnimationDeadline,
+                OnReactionDisplayed);
             _petSelectionService = new PetSelectionService(
                 catalogResult.Packs,
                 _settings,
                 PetSelectionService.PrepareAsync,
                 ApplyPreparedSelection,
                 _settingsService.RequestSave);
+            _petSelectionService.SelectionChanged += OnSelectionChanged;
             _trayService = new TrayService(
                 ToggleChat,
                 RequestExit,
@@ -76,9 +91,11 @@ public sealed class AppLifetime
                 _petWindow,
                 RequestExit);
             _bubbleWindow.IsVisibleChanged += OnBubbleVisibilityChanged;
+            HandlePetEvent(new PetEvent.ChatVisibilityChanged(false));
 
             _application.MainWindow = _petWindow;
             _petWindow.Show();
+            _animationPlayer.SetVisible(true);
             return true;
         }
         catch (Exception exception)
@@ -101,7 +118,81 @@ public sealed class AppLifetime
     {
         _petWindow?.ApplySelection(prepared);
         _trayService?.ApplySelection(prepared.Pack, prepared.TrayIcon);
+        _preparedAnimationIdle = prepared.IdleImage;
+        _preparedAnimationPackKey = PackKey(prepared.Pack);
     }
+
+    private void OnSelectionChanged(object? sender, PetSelectionChangedEventArgs e)
+    {
+        if (_animationPlayer is null || _settings is null)
+            return;
+
+        var fallbackIdle = _preparedAnimationPackKey == PackKey(e.Pack)
+            ? _preparedAnimationIdle
+            : _petWindow?.CurrentFrame;
+        if (fallbackIdle is null)
+            return;
+
+        var reducedMotion = _settings.PetOptions.TryGetValue(e.Pack.Id, out var options) &&
+            options.ReducedMotion;
+        var now = _animationClock.Elapsed;
+        PlaybackDecision decision;
+        if (_animationEngine is null)
+        {
+            _animationEngine = new AnimationStateEngine(e.Pack, reducedMotion);
+            decision = _animationEngine.Current(now);
+        }
+        else
+        {
+            decision = _animationEngine.Apply(new PetEvent.PetChanged(e.Pack, reducedMotion), now);
+        }
+
+        try
+        {
+            _animationPlayer.InstallPack(e.Pack, fallbackIdle, reducedMotion);
+            _animationPlayer.Apply(decision);
+        }
+        catch
+        {
+            // The transaction already committed a usable frozen idle image.
+        }
+        finally
+        {
+            _preparedAnimationIdle = null;
+            _preparedAnimationPackKey = null;
+        }
+    }
+
+    private void HandlePetEvent(PetEvent petEvent)
+    {
+        if (_animationEngine is null || _animationPlayer is null)
+            return;
+
+        var decision = _animationEngine.Apply(petEvent, _animationClock.Elapsed);
+        _animationPlayer.Apply(decision);
+    }
+
+    private void OnAnimationDeadline(TimeSpan monotonicNow)
+    {
+        if (_animationEngine is null || _animationPlayer is null)
+            return;
+
+        var decision = _animationEngine.Apply(new PetEvent.DeadlineElapsed(), monotonicNow);
+        _animationPlayer.Apply(decision);
+    }
+
+    private void OnReactionDisplayed(string playbackKey, TimeSpan monotonicNow)
+    {
+        if (_animationEngine is null || _animationPlayer is null)
+            return;
+
+        var decision = _animationEngine.Apply(
+            new PetEvent.ReactionDisplayed(playbackKey),
+            monotonicNow);
+        _animationPlayer.Apply(decision);
+    }
+
+    private static string PackKey(CharacterPack pack) => $"{pack.Id}@{pack.Version}";
 
     public void ToggleChat()
     {
@@ -199,6 +290,7 @@ public sealed class AppLifetime
         System.Windows.DependencyPropertyChangedEventArgs e)
     {
         _trayService?.SetChatVisible(_bubbleWindow?.IsVisible == true);
+        HandlePetEvent(new PetEvent.ChatVisibilityChanged(_bubbleWindow?.IsVisible == true));
     }
 
     private AppShutdownCoordinator CreateShutdownCoordinator() =>
@@ -206,6 +298,9 @@ public sealed class AppLifetime
             new AppShutdownOperations(
                 PrepareOwnedSurfacesForShutdown: () =>
                 {
+                    HandlePetEvent(new PetEvent.Exit());
+                    _animationPlayer?.Dispose();
+                    _animationPlayer = null;
                     _bubbleWindow?.BeginAppShutdown();
                     _petWindow?.BeginAppShutdown();
                 },
@@ -226,6 +321,8 @@ public sealed class AppLifetime
                 {
                     _trayService?.Dispose();
                     _trayService = null;
+                    if (_petSelectionService is not null)
+                        _petSelectionService.SelectionChanged -= OnSelectionChanged;
                     _petSelectionService?.Dispose();
                     _petSelectionService = null;
                 },

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using PetGPT.Models;
 using PetGPT.Services;
@@ -14,10 +15,11 @@ public partial class PetWindow : Window
     private readonly Action _toggleChatRequested;
     private readonly Action _exitRequested;
     private readonly Action<IReadOnlyList<MonitorInfo>> _bubbleRepositionRequested;
+    private readonly Action<PetEvent> _petEventRaised;
+    private readonly PetInteractionEventGate _interactionGate = new();
     private IReadOnlyList<MonitorInfo> _monitors = [];
     private ScreenPointPx _dragPointerStartPx;
     private ScreenRectPx _dragWindowStartPx;
-    private bool _dragging;
     private bool _geometryReady;
     private bool _allowClose;
     private bool _applyingPresentation;
@@ -29,7 +31,8 @@ public partial class PetWindow : Window
         AppSettings settings,
         Action toggleChatRequested,
         Action exitRequested,
-        Action<IReadOnlyList<MonitorInfo>> bubbleRepositionRequested)
+        Action<IReadOnlyList<MonitorInfo>> bubbleRepositionRequested,
+        Action<PetEvent> petEventRaised)
     {
         InitializeComponent();
 
@@ -38,6 +41,7 @@ public partial class PetWindow : Window
         _toggleChatRequested = toggleChatRequested;
         _exitRequested = exitRequested;
         _bubbleRepositionRequested = bubbleRepositionRequested;
+        _petEventRaised = petEventRaised ?? throw new ArgumentNullException(nameof(petEventRaised));
 
         Loaded += OnLoaded;
         LocationChanged += OnLocationChanged;
@@ -49,9 +53,13 @@ public partial class PetWindow : Window
         PetImage.MouseMove += OnPetMouseMove;
         PetImage.MouseLeftButtonUp += OnPetMouseUp;
         PetImage.LostMouseCapture += OnPetLostMouseCapture;
+        PetImage.MouseEnter += OnPetMouseEnter;
+        PetImage.MouseLeave += OnPetMouseLeave;
     }
 
     public IReadOnlyList<MonitorInfo> CurrentMonitors => _monitors;
+    internal System.Windows.Controls.Image AnimationSurface => PetImage;
+    internal BitmapSource? CurrentFrame => PetImage.Source as BitmapSource;
 
     internal void ApplySelection(PreparedPetSelection prepared)
     {
@@ -151,7 +159,7 @@ public partial class PetWindow : Window
         if (!_geometryReady)
             return;
 
-        _dragging = false;
+        _interactionGate.Complete();
         _dragPointerStartPx = WindowPositionService.GetCursorPositionPx();
         _dragWindowStartPx = WindowPositionService.GetWindowRectPx(this);
         PetImage.CaptureMouse();
@@ -166,10 +174,12 @@ public partial class PetWindow : Window
         var dx = current.X - _dragPointerStartPx.X;
         var dy = current.Y - _dragPointerStartPx.Y;
 
-        if (!_dragging && Math.Abs(dx) + Math.Abs(dy) < 5)
+        var transition = _interactionGate.ObserveMove(dx, dy);
+        if (transition is not null)
+            RaisePetEvent(transition);
+        if (!_interactionGate.IsDragging)
             return;
 
-        _dragging = true;
         var moved = WindowPositionService.MoveByScreenDelta(
             _dragWindowStartPx,
             _dragPointerStartPx,
@@ -180,8 +190,10 @@ public partial class PetWindow : Window
 
     private async void OnPetMouseUp(object sender, MouseButtonEventArgs e)
     {
-        var completedDrag = _dragging;
-        _dragging = false;
+        var completedDrag = _interactionGate.IsDragging;
+        var transition = _interactionGate.Complete();
+        if (transition is not null)
+            RaisePetEvent(transition);
         PetImage.ReleaseMouseCapture();
 
         if (!_geometryReady)
@@ -201,10 +213,12 @@ public partial class PetWindow : Window
 
     private async void OnPetLostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (!_geometryReady || !_dragging)
+        if (!_geometryReady || !_interactionGate.IsDragging)
             return;
 
-        _dragging = false;
+        var transition = _interactionGate.Complete();
+        if (transition is not null)
+            RaisePetEvent(transition);
         _monitors = WindowPositionService.GetMonitors();
         WindowPositionService.ClampWindowToAvailableWorkArea(this, _monitors);
         PersistPetPlacement();
@@ -219,6 +233,24 @@ public partial class PetWindow : Window
     private void OnExitMenuItemClick(object sender, RoutedEventArgs e)
     {
         _exitRequested();
+    }
+
+    private void OnPetMouseEnter(object sender, System.Windows.Input.MouseEventArgs e) =>
+        RaisePetEvent(new PetEvent.HoverEntered());
+
+    private void OnPetMouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
+        RaisePetEvent(new PetEvent.HoverLeft());
+
+    private void RaisePetEvent(PetEvent petEvent)
+    {
+        try
+        {
+            _petEventRaised(petEvent);
+        }
+        catch
+        {
+            // Animation is cosmetic; native window interaction must remain usable.
+        }
     }
 
     private void OnLocationChanged(object? sender, EventArgs e)
@@ -275,7 +307,7 @@ public partial class PetWindow : Window
         try
         {
             _monitors = WindowPositionService.GetMonitors();
-            if (_dragging)
+            if (_interactionGate.IsDragging)
                 return;
 
             WindowPositionService.ClampWindowToAvailableWorkArea(this, _monitors);
@@ -314,5 +346,28 @@ public partial class PetWindow : Window
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemParameters.StaticPropertyChanged -= OnSystemParametersChanged;
+    }
+}
+
+internal sealed class PetInteractionEventGate
+{
+    public bool IsDragging { get; private set; }
+
+    public PetEvent? ObserveMove(double deltaX, double deltaY)
+    {
+        if (IsDragging || Math.Abs(deltaX) + Math.Abs(deltaY) < 5)
+            return null;
+
+        IsDragging = true;
+        return new PetEvent.DragStarted();
+    }
+
+    public PetEvent? Complete()
+    {
+        if (!IsDragging)
+            return null;
+
+        IsDragging = false;
+        return new PetEvent.DragEnded();
     }
 }

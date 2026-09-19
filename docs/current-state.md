@@ -359,3 +359,95 @@ required for tray selection/check behavior, visible image/size/anchor changes,
 failed-selection UI stability, restart persistence, and icon replacement. The
 bounded executable smoke is not evidence for those GUI paths. Explorer restart
 recovery and real multi-monitor/mixed-DPI hardware checks also remain open.
+
+The subsequent user-operated T6 clean-publish smoke passed **6/6**: Legacy
+appeared normally; the tray Pet submenu was active with Legacy checked;
+re-selecting Legacy caused no duplicate, jump, crash, or browser reload and
+preserved the current ChatGPT conversation/login; drag, click-to-open,
+FollowPet, Reload, and tray Show/Hide remained working; and Exit/restart
+preserved Legacy selection, pet position, and bubble size. The earlier
+`Pet — unavailable` observation came from stale build output and did not
+reproduce from the clean publish, so it is not tracked as an unresolved bug.
+
+## T7 deterministic animation state and PNG renderer — 2026-09-19
+
+T7 adds a pure `AnimationStateEngine` driven only by typed `PetEvent` values
+and caller-supplied monotonic `TimeSpan` values. Lifecycle, interaction, chat
+activity, typing expiry, and the single reaction lane remain orthogonal facts;
+the reducer computes one `PlaybackDecision` without WPF, files, timers,
+WebView types, wall-clock reads, or catalog lookups. The exact visual priority
+is: exiting/disabled 100, dragging 90, sleeping 80, confirmed or provisional
+generating 70, validated reaction 60, user typing 50, hover 40, chat open 30,
+and idle 0. Higher states preempt playback without rewriting lower facts.
+
+Typing expires two seconds after the last active signal and clears immediately
+on inactive. A reaction's pending TTL starts at receipt and is at most ten
+seconds; its visible lease starts only on first display and continues to elapse
+through drag or generation preemption. The renderer acknowledges the first
+successfully assigned frame back to the reducer by stable playback key, so a
+hidden pet cannot consume a visible reaction lease. New send, selected-pack change, route
+invalidation, sleep, cancel, and Exit drop the current reaction. Same-turn
+duplicates are ignored and a newer turn replaces the prior reaction. Native
+send creates a typed generation/turn correlation and a provisional generating
+indicator for at most three seconds. Confirmed generation remains until its
+matching idle or unavailable signal; matching idle releases a fresh pending
+reaction, while unavailable activity remains `unknown` rather than being
+reported as completed. Playback keys distinguish real state/turn/pack changes
+from recomputation, so repeated hover or typing signals do not restart a clip.
+
+`PetAnimationPlayer` decodes only the selected immutable pack and supports the
+T5 v1 formats: held static PNG and uniform row-major PNG sheets. Files are
+decoded with `BitmapCacheOption.OnLoad`; frozen images no longer retain source
+file handles. Candidate resolution preserves pack order, skips T5-unavailable
+clips, and falls back to required `idle` without changing the source reaction
+ID. One-shot sheets hold their final frame, loop and one-shot frames are chosen
+from elapsed monotonic time, late UI delivery skips directly to the current
+frame, and one scheduler services the next frame or reducer deadline without
+catch-up callbacks. Reduced motion keeps the same semantic state and lease but
+selects deterministic frame zero and performs no moving-frame scheduling.
+
+Static Legacy idle has no next deadline and no active animation scheduler; no
+polling or permanent 60 FPS loop was added. This is a code/test observation,
+not a precise CPU measurement. If an optional animated asset disappears after
+validation, the already committed T6 idle remains visible and the failed clip
+does not leave a background frame loop running. A successful pack switch is
+received through `PetSelectionService.SelectionChanged`, clears old reaction
+and decoded-frame state, installs only the new pack, and preserves T6's
+prepare-before-commit idle/size/anchor transaction. Animation handoff failures
+leave that committed idle visible and do not touch or recreate ChatGPT or its
+WebView profile.
+
+Native events now supply drag start once at threshold crossing, drag end once,
+hover enter/leave, and AppLifetime-owned chat visibility. Typing, generation,
+validated reaction, and sleep inputs remain synthetic/test-only in T7; no DOM
+or WebView bridge was added. Exit disables the reducer, stops and disposes the
+single scheduler, releases decoded resources, and ignores late callbacks as
+part of the existing ordered shutdown.
+
+Automated T7 evidence: the focused `AnimationStateEngineTests` run passes 51
+tests, covering the priority table, monotonic expiry/leases, generation and
+turn correlation, playback identity, candidate fallback, reduced motion,
+row-major decode/frame math, disposal, safe asset failure, and active-pack
+resource reset. The full suite passes 263 tests. `dotnet build PetGPT.csproj -c
+Release` succeeds with 0 warnings and 0 errors. After terminating stale
+`PetGPT.exe` instances and removing only `artifacts/publish`, the clean Release
+publish succeeded. The exact `artifacts/publish/PetGPT.exe` stayed alive and
+responsive for more than ten seconds with no immediate crash.
+
+Independent spec/quality review found and the implementation corrected four
+T7 issues: reaction leases previously began at reducer selection rather than
+confirmed display; an idle signal could release an unconfirmed provisional
+generation; a later observed generation serial could be rejected after a prior
+generation completed; and T6's prepared fallback could expose a whole idle
+sprite sheet rather than frame zero. Each fix has a focused regression test.
+The scoped re-review marked all four addressed, found no new Critical or
+Important issues, and approved both specification compliance and code quality.
+
+Production still ships only the static Legacy compatibility pack, so visible
+animation of a real production character cannot yet be claimed. Native Windows
+UI automation was unavailable in this run; interactive confirmation that the
+published Legacy pet remains visually unchanged, has no jitter, and preserves
+drag, click/show/hide, tray Legacy check, and normal Exit remains manual. The
+process smoke is not evidence for those GUI paths. T8 navigation/theme work,
+WebView activity sourcing, persona sessions, marker parsing/validation, and
+ChatGPT DOM observation have not started.

@@ -281,6 +281,7 @@ public sealed class PetSelectionService : IDisposable
                 image.EndInit();
                 image.Freeze();
             }
+            var idleFrame = PrepareIdleFrame(image, idle);
 
             var usesFallback = true;
             DrawingIcon icon;
@@ -304,12 +305,28 @@ public sealed class PetSelectionService : IDisposable
             }
 
             return Task.FromResult<PreparedPetSelection?>(
-                new PreparedPetSelection(pack, image, icon, icon, usesFallback));
+                new PreparedPetSelection(pack, idleFrame, icon, icon, usesFallback));
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or NotSupportedException or ArgumentException)
         {
             return Task.FromResult<PreparedPetSelection?>(null);
         }
+    }
+
+    internal static BitmapSource PrepareIdleFrame(BitmapSource decodedImage, CharacterClip idleClip)
+    {
+        ArgumentNullException.ThrowIfNull(decodedImage);
+        ArgumentNullException.ThrowIfNull(idleClip);
+        if (idleClip.Format.Equals("png", StringComparison.Ordinal))
+            return decodedImage;
+
+        var width = idleClip.FrameWidth ??
+            throw new InvalidOperationException("Validated idle sheet width is missing.");
+        var height = idleClip.FrameHeight ??
+            throw new InvalidOperationException("Validated idle sheet height is missing.");
+        var frame = new CroppedBitmap(decodedImage, new System.Windows.Int32Rect(0, 0, width, height));
+        frame.Freeze();
+        return frame;
     }
 
 }

@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using PetGPT.Animation;
 using PetGPT.Characters;
 using PetGPT.Models;
+using PetGPT.Personas;
 using PetGPT.Services;
 using PetGPT.Windows;
 
@@ -25,6 +26,7 @@ public sealed class AppLifetime
     private ChatBubbleWindow? _bubbleWindow;
     private TrayService? _trayService;
     private PetSelectionService? _petSelectionService;
+    private PersonaSession? _personaSession;
     private AnimationStateEngine? _animationEngine;
     private PetAnimationPlayer? _animationPlayer;
     private BitmapSource? _preparedAnimationIdle;
@@ -77,10 +79,14 @@ public sealed class AppLifetime
                 ApplyPreparedSelection,
                 _settingsService.RequestSave);
             _petSelectionService.SelectionChanged += OnSelectionChanged;
+            _personaSession = new PersonaSession(
+                _settings.Roleplay.Enabled,
+                _settings.Roleplay.ActivationMode);
             _bubbleWindow = new ChatBubbleWindow(
                 _settings,
                 _settingsService,
                 _petWindow,
+                _personaSession,
                 RequestExit);
             _bubbleWindow.IsVisibleChanged += OnBubbleVisibilityChanged;
             _trayService = new TrayService(
@@ -324,6 +330,7 @@ public sealed class AppLifetime
                     HandlePetEvent(new PetEvent.Exit());
                     _animationPlayer?.Dispose();
                     _animationPlayer = null;
+                    _personaSession?.Dispose();
                     _bubbleWindow?.BeginAppShutdown();
                     _petWindow?.BeginAppShutdown();
                 },
@@ -348,6 +355,7 @@ public sealed class AppLifetime
                         _petSelectionService.SelectionChanged -= OnSelectionChanged;
                     _petSelectionService?.Dispose();
                     _petSelectionService = null;
+                    _personaSession = null;
                 },
                 ReleaseInstanceGuard: () =>
                 {

@@ -563,11 +563,81 @@ seconds and was then stopped by the harness.
 
 The automated fixtures exercise the native host contracts rather than running
 an authenticated browser page; no browser framework was added solely for T8.
-User-operated clean-publish verification is still required for: configured
-first open; Show/Hide preservation; direct-home New PetChat followed by native
-submission and project conversation creation; History/native list visibility;
-proof that global New chat is never invoked; conservative Stay/Leave behavior;
-Reload reattachment; normal login; compact readability of project/history
-controls; Open in browser; and live theme apply/remove when a validated themed
-pack is available. T9 persona construction/staging, T10 reaction semantics,
-and T11 command/settings windows have not started.
+The authenticated T8 clean-publish smoke passed **9/9** checks: direct
+configured-home first open with Show/Hide preservation; readable project
+landing under compact mode; New PetChat availability; conservative Stay/Leave;
+direct project-home navigation rather than global New Chat; native submission
+creating a project conversation without PetGPT insertion/submission;
+History/native-list behavior; Reload with preserved login and commands; Open
+in browser plus the existing Show/Hide, drag, Legacy check state, and Exit
+behavior. Live theme application remains manually deferred because the only
+production pack is Legacy and it has no theme.
+
+T9 adds explicit persona assembly and activation without treating local
+selection as remote synchronization. `PersonaAssembler` consumes only an
+immutable validated pack snapshot, its full `PersonaProfile` and voice, exact
+pack-defined reaction vocabulary, and a current activation epoch. It produces
+deterministic, human-reviewable Persona Context format version **1**, includes
+the exact current marker example as metadata, and enforces a final **64 KiB
+UTF-8** bound without truncation. A lowercase SHA-256 source fingerprint covers
+the format version, pack identity/version, every profile and voice field, and
+the exact reaction meanings/intensity/animation metadata. It excludes the
+epoch and filesystem identity, so semantic changes invalidate activation while
+irrelevant paths or timestamps do not.
+
+`PersonaSession` has the explicit states `Inactive`, `NeedsActivation`,
+`Staged`, `AwaitingMarker`, `ProtocolObserved`, and `Degraded`. Each activation
+identity uses a cryptographically random 16-lowercase-hex epoch. Pet/persona or
+fingerprint changes, full document replacement, unrelated/new conversations,
+route races, and explicit restart rotate it; repeated observation of the same
+route and bubble Show/Hide do not. A project-landing activation can follow the
+first new project conversation only after a correlated native submission in
+the same document, to the same project, on the immediately next route revision,
+within 15 seconds, and only when the destination conversation was not already
+observed. Otherwise, navigation requires activation again. A user can press
+Apply again from `AwaitingMarker` or `ProtocolObserved` to rotate the epoch and
+explicitly retry without auto-sending. Legacy, disabled roleplay, and
+unsupported activation modes remain `Inactive` and do not affect the local
+visual character.
+
+The chat chrome now shows truthful persona status plus **Apply character to
+this chat**, **Review**, and **Copy context**. Review is native and read-only.
+Copy writes only the exact host-assembled context after an explicit user action
+and remains `NeedsActivation` with a paste/send instruction; clipboard failure
+does not advance state. Staging uses a closed, bounded host-to-page operation
+with a random request ID and exact document/revision checks, requires a
+positively proven empty composer and matching closed `stageResult`, and never
+submits. Current production compatibility deliberately keeps
+`ComposerEmpty` **UNKNOWN/unsupported**, so staging is unavailable and Copy is
+the normal path; PetGPT never reads, clears, appends to, or overwrites an
+unknown draft.
+
+The adapter observes only accepted form submission or an enabled native Send
+control, plus regenerate activity, with an opaque generation serial; an Enter
+keydown alone is not accepted as submission evidence. It never returns prompt
+or response text. A credible submit after PetGPT-owned staging or explicit Copy
+moves to `AwaitingMarker`; ordinary sends and regenerate do not claim
+activation. The closed capability envelope separately reports structural
+submission observation. Losing that capability invalidates activation and
+degrades the session, while the transient capability reset during a route
+revision waits for fresh adapter readiness rather than causing a false loss.
+Adapter degradation also revokes staging before any composer mutation. A typed
+trusted-evidence seam can move a matching current epoch/pet/document from
+`AwaitingMarker` to `ProtocolObserved`, but production marker observation and
+validation wait for T10. There is no auto-send, response scan, marker parsing,
+reaction dispatch, Project API edit, or global custom-instruction edit. Shared
+instructions for manual PetChats Project setup are in
+`docs/pet-chats-project-instructions.md`.
+
+Automated T9 evidence: `PersonaSessionTests` passes **95/95**, the focused T8
+regression suite remains **96/96**, adapter syntax passes, the extended offline
+adapter fixtures pass **12/12**, and the full suite passes **454/454**. The
+Release build succeeded with 0 warnings and 0 errors. A clean Release publish
+contains `PetGPT.exe`, all four Web assets, only the bundled Legacy pack and
+placeholder, and no test assemblies, fixtures, synthetic persona pack, or
+reaction files. The exact published executable remained alive and responsive
+for ten seconds and was stopped by the harness. Manual persona UX verification
+remains outstanding because production currently ships only Legacy, which has
+no persona/reactions; a deliberately imported validated persona pack and local
+roleplay enablement are required to exercise Review/Copy/native-send behavior.
+T10 reaction protocol work and T11 command/settings windows have not started.

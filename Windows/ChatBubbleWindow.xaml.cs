@@ -3,7 +3,14 @@ using System.Windows;
 using System.Windows.Input;
 using PetGPT.Characters;
 using PetGPT.Models;
+using PetGPT.Personas;
 using PetGPT.Services;
+using WpfButton = System.Windows.Controls.Button;
+using WpfGrid = System.Windows.Controls.Grid;
+using WpfRowDefinition = System.Windows.Controls.RowDefinition;
+using WpfScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility;
+using WpfTextBox = System.Windows.Controls.TextBox;
+using WpfFontFamily = System.Windows.Media.FontFamily;
 
 namespace PetGPT.Windows;
 
@@ -14,6 +21,7 @@ public partial class ChatBubbleWindow : Window
     private readonly Window _pet;
     private readonly ChatWebViewService _chatService;
     private readonly ChatNavigationService _navigationService;
+    private readonly PersonaSession _personaSession;
     private readonly Action _exitRequested;
     private readonly double _normalMinWidthDip;
     private readonly double _normalMinHeightDip;
@@ -28,6 +36,7 @@ public partial class ChatBubbleWindow : Window
         AppSettings settings,
         SettingsService settingsService,
         Window pet,
+        PersonaSession personaSession,
         Action exitRequested)
     {
         InitializeComponent();
@@ -35,6 +44,7 @@ public partial class ChatBubbleWindow : Window
         _settings = settings;
         _settingsService = settingsService;
         _pet = pet;
+        _personaSession = personaSession ?? throw new ArgumentNullException(nameof(personaSession));
         _exitRequested = exitRequested;
         _normalMinWidthDip = MinWidth;
         _normalMinHeightDip = MinHeight;
@@ -50,11 +60,15 @@ public partial class ChatBubbleWindow : Window
             ConfirmLeaveAsync);
         _chatService.SourceChanged += OnChatSourceChanged;
         _chatService.BridgeStatusChanged += OnBridgeStatusChanged;
+        _chatService.PersonaContextChanged += OnPersonaContextChanged;
+        _chatService.SubmissionObserved += OnSubmissionObserved;
+        _personaSession.StatusChanged += OnPersonaStatusChanged;
 
         var configured = _navigationService.HasConfiguredHome;
         NewPetChatButton.IsEnabled = configured;
         HistoryButton.IsEnabled = configured;
         PetChatsStatusText.Text = configured ? string.Empty : "PetChats not configured";
+        RefreshPersonaUi();
 
         Loaded += OnLoaded;
         SizeChanged += OnSizeChanged;
@@ -79,6 +93,7 @@ public partial class ChatBubbleWindow : Window
     {
         ArgumentNullException.ThrowIfNull(pack);
         _chatService.SetSelectedTheme(_settings.ThemesEnabled ? pack.Theme : null);
+        _personaSession.SelectPack(pack);
     }
 
     public async Task<NavigationResult> NavigateAsync(NavigationIntent intent)
@@ -271,6 +286,114 @@ public partial class ChatBubbleWindow : Window
         _navigationService.UpdateGuardState(
             _chatService.GenerationState,
             _chatService.ComposerDraftState);
+        _personaSession.ObserveGeneration(_chatService.GenerationState);
+        if (_chatService.CurrentDocument is not null && _chatService.IsAdapterReady)
+            _personaSession.ObserveSubmissionCapability(_chatService.BridgeCapabilities.Submission);
+    }
+
+    private void OnPersonaContextChanged(object? sender, PersonaChatContextChangedEventArgs e)
+    {
+        if (e.Invalidated)
+            _personaSession.InvalidateDocument();
+        else if (e.Context is not null)
+            _personaSession.ObserveContext(e.Context);
+    }
+
+    private void OnSubmissionObserved(object? sender, BridgeSubmissionObservation observation) =>
+        _personaSession.ObserveSubmission(observation);
+
+    private void OnPersonaStatusChanged(object? sender, EventArgs e) => RefreshPersonaUi();
+
+    private void RefreshPersonaUi()
+    {
+        PersonaStatusText.Text = _personaSession.StatusText;
+        ApplyPersonaButton.IsEnabled = _personaSession.CanApply && !_appShuttingDown;
+        ReviewPersonaButton.IsEnabled = _personaSession.CanReview && !_appShuttingDown;
+        CopyPersonaButton.IsEnabled = _personaSession.CanCopy && !_appShuttingDown;
+    }
+
+    private async void OnApplyPersona(object sender, RoutedEventArgs e)
+    {
+        if (_appShuttingDown)
+            return;
+        var snapshot = _chatService.GetPersonaStageSnapshot();
+        if (snapshot is null)
+            return;
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            await _personaSession.ApplyAsync(
+                snapshot,
+                _chatService.StagePersonaAsync,
+                cancellation.Token);
+        }
+        catch (OperationCanceledException) when (!_appShuttingDown)
+        {
+            System.Windows.MessageBox.Show(
+                "The composer did not confirm staging. Use Copy context, then paste and send it manually.",
+                "Persona staging unavailable",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    private void OnCopyPersona(object sender, RoutedEventArgs e)
+    {
+        if (_appShuttingDown)
+            return;
+        _personaSession.CopyContext(text =>
+        {
+            System.Windows.Clipboard.SetText(text, System.Windows.TextDataFormat.UnicodeText);
+            return true;
+        });
+    }
+
+    private void OnReviewPersona(object sender, RoutedEventArgs e)
+    {
+        if (_appShuttingDown || _personaSession.Context is not { } context)
+            return;
+
+        var close = new WpfButton
+        {
+            Content = "Close",
+            Padding = new Thickness(18, 6, 18, 6),
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
+            IsDefault = true
+        };
+        var layout = new WpfGrid { Margin = new Thickness(12) };
+        layout.RowDefinitions.Add(new WpfRowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        layout.RowDefinitions.Add(new WpfRowDefinition { Height = GridLength.Auto });
+        var text = new WpfTextBox
+        {
+            Text = context.Text,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            AcceptsTab = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = WpfScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = WpfScrollBarVisibility.Auto,
+            FontFamily = new WpfFontFamily("Consolas")
+        };
+        WpfGrid.SetRow(text, 0);
+        WpfGrid.SetRow(close, 1);
+        close.Margin = new Thickness(0, 10, 0, 0);
+        layout.Children.Add(text);
+        layout.Children.Add(close);
+        var review = new Window
+        {
+            Title = $"Review {context.CharacterId} context",
+            Owner = this,
+            Width = 660,
+            Height = 620,
+            MinWidth = 420,
+            MinHeight = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = layout,
+            ShowInTaskbar = false
+        };
+        close.Click += (_, _) => review.Close();
+        review.ShowDialog();
     }
 
     private void OnReload(object sender, RoutedEventArgs e)
@@ -295,12 +418,16 @@ public partial class ChatBubbleWindow : Window
         _appShuttingDown = true;
         _geometryReady = false;
         _chatService.BeginShutdown();
+        RefreshPersonaUi();
     }
 
     public async Task DisposeBrowserAsync()
     {
         _chatService.SourceChanged -= OnChatSourceChanged;
         _chatService.BridgeStatusChanged -= OnBridgeStatusChanged;
+        _chatService.PersonaContextChanged -= OnPersonaContextChanged;
+        _chatService.SubmissionObserved -= OnSubmissionObserved;
+        _personaSession.StatusChanged -= OnPersonaStatusChanged;
         await _chatService.DisposeAsync();
     }
 

@@ -259,6 +259,7 @@ public sealed class NavigationAndCommandsTests
 
         Assert.Equal(BridgeMessageResult.Accepted, result);
         Assert.True(bridge.Capabilities.Generation);
+        Assert.True(bridge.Capabilities.Submission);
         Assert.False(bridge.Capabilities.ComposerEmpty);
     }
 
@@ -655,7 +656,7 @@ public sealed class NavigationAndCommandsTests
             "\"composerEmpty\":" + composerEmpty.ToString().ToLowerInvariant() + "," +
             "\"pageSurface\":true,\"secondarySurface\":false," +
             "\"composerSurface\":true,\"scrollbar\":true," +
-            "\"compactNavigation\":false}}");
+            "\"compactNavigation\":false,\"submission\":true}}");
 
     private static string Envelope(BridgeDocumentIdentity document, string kind, string payload) =>
         "{\"v\":1,\"kind\":\"" + kind + "\",\"documentSession\":\"" +

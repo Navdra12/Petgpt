@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PetGPT.Models;
+using PetGPT.Personas;
 
 namespace PetGPT.Services;
 
@@ -16,7 +17,8 @@ public sealed record BridgeCapabilities(
     bool SecondarySurface,
     bool ComposerSurface,
     bool Scrollbar,
-    bool CompactNavigation)
+    bool CompactNavigation,
+    bool Submission = false)
 {
     public static BridgeCapabilities None { get; } = new(false, false, false, false, false, false, false);
 }
@@ -30,9 +32,14 @@ public enum BridgeMessageResult
     StaleDocument,
     UnsupportedKind,
     CapabilityUnavailable,
+    Unsolicited,
     RateLimited,
     Disposed
 }
+
+public delegate void BridgeSubmissionObservedEventHandler(
+    object? sender,
+    BridgeSubmissionObservation observation);
 
 public sealed class WebViewBridge : IDisposable
 {
@@ -45,6 +52,8 @@ public sealed class WebViewBridge : IDisposable
     private readonly Stopwatch? _clock;
     private double _messageTokens = 40;
     private TimeSpan _lastMessageTime;
+    private readonly object _stageGate = new();
+    private PendingStage? _pendingStage;
     private bool _disposed;
 
     public WebViewBridge()
@@ -61,11 +70,13 @@ public sealed class WebViewBridge : IDisposable
     }
 
     public BridgeCapabilities Capabilities { get; private set; } = BridgeCapabilities.None;
+    public bool IsAdapterReady { get; private set; }
     public GenerationCapabilityState GenerationState { get; private set; } = GenerationCapabilityState.Unknown;
     public ComposerDraftState ComposerDraftState { get; private set; } = ComposerDraftState.Unknown;
     public BridgeDocumentIdentity? CurrentDocument => _document;
 
     public event EventHandler? StatusChanged;
+    public event BridgeSubmissionObservedEventHandler? SubmissionObserved;
 
     public BridgeDocumentIdentity BeginDocument(Uri topLevelUri, string? documentSession = null)
     {
@@ -100,6 +111,58 @@ public sealed class WebViewBridge : IDisposable
             return;
         _document = null;
         ResetStatus();
+    }
+
+    public Task<StagePersonaResult> StagePersonaAsync(
+        PersonaContext context,
+        Action<string> postMessage,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(postMessage);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_document is null)
+            return Task.FromResult(StagePersonaResult.RouteChanged);
+        if (!Capabilities.ComposerEmpty || ComposerDraftState == Models.ComposerDraftState.Unknown)
+            return Task.FromResult(StagePersonaResult.Unsupported);
+        if (ComposerDraftState == Models.ComposerDraftState.NonEmpty)
+            return Task.FromResult(StagePersonaResult.ComposerNotEmpty);
+        if (GenerationState == GenerationCapabilityState.Generating)
+            return Task.FromResult(StagePersonaResult.Generating);
+        if (context.Utf8ByteCount > PersonaAssembler.MaximumContextUtf8Bytes)
+            return Task.FromResult(StagePersonaResult.Unsupported);
+
+        var requestId = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        var completion = new TaskCompletionSource<StagePersonaResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingStage(requestId, _document, completion);
+        lock (_stageGate)
+        {
+            if (_pendingStage is not null)
+                return Task.FromResult(StagePersonaResult.Unsupported);
+            _pendingStage = pending;
+        }
+
+        var operation = JsonSerializer.Serialize(new
+        {
+            v = 1,
+            op = "stagePersona",
+            documentSession = pending.Document.DocumentSession,
+            routeRevision = pending.Document.RouteRevision,
+            requestId,
+            text = context.Text
+        });
+        try
+        {
+            postMessage(operation);
+        }
+        catch
+        {
+            CompleteStage(pending, StagePersonaResult.RouteChanged);
+        }
+
+        return AwaitStageAsync(pending, cancellationToken);
     }
 
     public BridgeMessageResult AcceptMessage(
@@ -180,14 +243,16 @@ public sealed class WebViewBridge : IDisposable
                 "secondarySurface",
                 "composerSurface",
                 "scrollbar",
-                "compactNavigation") ||
+                "compactNavigation",
+                "submission") ||
             !TryGetBoolean(values, "generation", out var generation) ||
             !TryGetBoolean(values, "composerEmpty", out var composerEmpty) ||
             !TryGetBoolean(values, "pageSurface", out var pageSurface) ||
             !TryGetBoolean(values, "secondarySurface", out var secondarySurface) ||
             !TryGetBoolean(values, "composerSurface", out var composerSurface) ||
             !TryGetBoolean(values, "scrollbar", out var scrollbar) ||
-            !TryGetBoolean(values, "compactNavigation", out var compactNavigation))
+            !TryGetBoolean(values, "compactNavigation", out var compactNavigation) ||
+            !TryGetBoolean(values, "submission", out var submission))
         {
             return BridgeMessageResult.InvalidSchema;
         }
@@ -199,12 +264,15 @@ public sealed class WebViewBridge : IDisposable
             secondarySurface,
             composerSurface,
             scrollbar,
-            compactNavigation);
+            compactNavigation,
+            submission);
+        var readyChanged = !IsAdapterReady;
+        IsAdapterReady = true;
         var generationReset = !next.Generation &&
             GenerationState != GenerationCapabilityState.Unknown;
         var composerReset = !next.ComposerEmpty &&
             ComposerDraftState != Models.ComposerDraftState.Unknown;
-        if (next != Capabilities || generationReset || composerReset)
+        if (readyChanged || next != Capabilities || generationReset || composerReset)
         {
             Capabilities = next;
             if (generationReset)
@@ -213,6 +281,8 @@ public sealed class WebViewBridge : IDisposable
                 ComposerDraftState = Models.ComposerDraftState.Unknown;
             StatusChanged?.Invoke(this, EventArgs.Empty);
         }
+        if (!next.ComposerEmpty)
+            CompleteCurrentStage(StagePersonaResult.Unsupported);
         return BridgeMessageResult.Accepted;
     }
 
@@ -245,6 +315,8 @@ public sealed class WebViewBridge : IDisposable
                 GenerationState = next.Value;
                 StatusChanged?.Invoke(this, EventArgs.Empty);
             }
+            if (next.Value == GenerationCapabilityState.Generating)
+                CompleteCurrentStage(StagePersonaResult.Generating);
             return BridgeMessageResult.Accepted;
         }
 
@@ -264,6 +336,63 @@ public sealed class WebViewBridge : IDisposable
                 ComposerDraftState = next;
                 StatusChanged?.Invoke(this, EventArgs.Empty);
             }
+            if (!empty)
+                CompleteCurrentStage(StagePersonaResult.ComposerNotEmpty);
+            return BridgeMessageResult.Accepted;
+        }
+
+        if (eventName is "submit" or "regenerate")
+        {
+            if (!HasExactly(payload, "event", "generationSerial") ||
+                !payload.TryGetProperty("generationSerial", out var serialElement) ||
+                serialElement.ValueKind != JsonValueKind.Number ||
+                !serialElement.TryGetInt64(out var serial) || serial <= 0)
+            {
+                return BridgeMessageResult.InvalidSchema;
+            }
+
+            SubmissionObserved?.Invoke(
+                this,
+                new BridgeSubmissionObservation(
+                    _document!,
+                    new GenerationSerial(serial),
+                    eventName == "regenerate"));
+            return BridgeMessageResult.Accepted;
+        }
+
+        if (eventName == "stageResult")
+        {
+            if (!HasExactly(payload, "event", "requestId", "result") ||
+                !TryGetBoundedString(payload, "requestId", 16, out var requestId) ||
+                !SessionPattern.IsMatch(requestId) ||
+                !TryGetBoundedString(payload, "result", 24, out var resultName))
+            {
+                return BridgeMessageResult.InvalidSchema;
+            }
+
+            var result = resultName switch
+            {
+                "staged" => StagePersonaResult.Staged,
+                "composerNotEmpty" => StagePersonaResult.ComposerNotEmpty,
+                "generating" => StagePersonaResult.Generating,
+                "unsupported" => StagePersonaResult.Unsupported,
+                "routeChanged" => StagePersonaResult.RouteChanged,
+                _ => (StagePersonaResult?)null
+            };
+            if (result is null)
+                return BridgeMessageResult.InvalidSchema;
+
+            PendingStage? pending;
+            lock (_stageGate)
+                pending = _pendingStage;
+            if (pending is null ||
+                !pending.RequestId.Equals(requestId, StringComparison.Ordinal) ||
+                pending.Document != _document)
+            {
+                return BridgeMessageResult.Unsolicited;
+            }
+
+            CompleteStage(pending, result.Value);
             return BridgeMessageResult.Accepted;
         }
 
@@ -272,14 +401,55 @@ public sealed class WebViewBridge : IDisposable
 
     private void ResetStatus()
     {
-        var changed = Capabilities != BridgeCapabilities.None ||
+        CompleteCurrentStage(StagePersonaResult.RouteChanged);
+        var changed = IsAdapterReady ||
+            Capabilities != BridgeCapabilities.None ||
             GenerationState != GenerationCapabilityState.Unknown ||
             ComposerDraftState != Models.ComposerDraftState.Unknown;
+        IsAdapterReady = false;
         Capabilities = BridgeCapabilities.None;
         GenerationState = GenerationCapabilityState.Unknown;
         ComposerDraftState = Models.ComposerDraftState.Unknown;
         if (changed)
             StatusChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task<StagePersonaResult> AwaitStageAsync(
+        PendingStage pending,
+        CancellationToken cancellationToken)
+    {
+        using var registration = cancellationToken.Register(() =>
+        {
+            if (ClearPendingStage(pending))
+                pending.Completion.TrySetCanceled(cancellationToken);
+        });
+        return await pending.Completion.Task;
+    }
+
+    private void CompleteCurrentStage(StagePersonaResult result)
+    {
+        PendingStage? pending;
+        lock (_stageGate)
+            pending = _pendingStage;
+        if (pending is not null)
+            CompleteStage(pending, result);
+    }
+
+    private void CompleteStage(PendingStage pending, StagePersonaResult result)
+    {
+        if (ClearPendingStage(pending))
+            pending.Completion.TrySetResult(result);
+    }
+
+    private bool ClearPendingStage(PendingStage pending)
+    {
+        lock (_stageGate)
+        {
+            if (!ReferenceEquals(_pendingStage, pending))
+                return false;
+            _pendingStage = null;
+            return true;
+        }
     }
 
     private bool TryConsumeMessageToken()
@@ -347,4 +517,9 @@ public sealed class WebViewBridge : IDisposable
         InvalidateDocument();
         _disposed = true;
     }
+
+    private sealed record PendingStage(
+        string RequestId,
+        BridgeDocumentIdentity Document,
+        TaskCompletionSource<StagePersonaResult> Completion);
 }

@@ -4,6 +4,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using PetGPT.Characters;
 using PetGPT.Models;
+using PetGPT.Personas;
 
 namespace PetGPT.Services;
 
@@ -20,6 +21,14 @@ public enum ChatWebViewLifecycleState
 public sealed class ChatSourceChangedEventArgs(Uri? source) : EventArgs
 {
     public Uri? Source { get; } = source;
+}
+
+public sealed class PersonaChatContextChangedEventArgs(
+    PersonaChatContext? context,
+    bool invalidated) : EventArgs
+{
+    public PersonaChatContext? Context { get; } = context;
+    public bool Invalidated { get; } = invalidated;
 }
 
 public enum WebDocumentTransition
@@ -75,6 +84,7 @@ public sealed class ChatWebViewService
             "PetGPT",
             "WebView2");
         _bridge.StatusChanged += OnBridgeStatusChanged;
+        _bridge.SubmissionObserved += OnBridgeSubmissionObserved;
     }
 
     public ChatWebViewLifecycleState State => _lifecycle.State;
@@ -82,9 +92,14 @@ public sealed class ChatWebViewService
     public Uri? CurrentUri => _navigationState.CurrentUri;
     public GenerationCapabilityState GenerationState => _bridge.GenerationState;
     public ComposerDraftState ComposerDraftState => _bridge.ComposerDraftState;
+    public BridgeDocumentIdentity? CurrentDocument => _bridge.CurrentDocument;
+    public BridgeCapabilities BridgeCapabilities => _bridge.Capabilities;
+    public bool IsAdapterReady => _bridge.IsAdapterReady;
 
     public event EventHandler<ChatSourceChangedEventArgs>? SourceChanged;
     public event EventHandler? BridgeStatusChanged;
+    public event EventHandler<PersonaChatContextChangedEventArgs>? PersonaContextChanged;
+    public event BridgeSubmissionObservedEventHandler? SubmissionObserved;
 
     public Task InitializeAsync(bool compactMode, bool themesEnabled)
     {
@@ -127,6 +142,41 @@ public sealed class ChatWebViewService
         _webView.CoreWebView2?.Reload();
     }
 
+    public PersonaStageSnapshot? GetPersonaStageSnapshot()
+    {
+        var context = CreatePersonaChatContext();
+        return context is null
+            ? null
+            : new PersonaStageSnapshot(
+                context,
+                _bridge.Capabilities,
+                _bridge.ComposerDraftState,
+                _bridge.GenerationState);
+    }
+
+    public Task<StagePersonaResult> StagePersonaAsync(
+        PersonaContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!_lifecycle.CanUseBrowser || !IsCurrentSourceEligible())
+            return Task.FromResult(StagePersonaResult.RouteChanged);
+
+        var expectedDocument = _bridge.CurrentDocument;
+        return _bridge.StagePersonaAsync(
+            context,
+            json =>
+            {
+                if (!IsCurrentSourceEligible() ||
+                    expectedDocument is null ||
+                    _bridge.CurrentDocument != expectedDocument)
+                {
+                    throw new InvalidOperationException("Chat route changed before staging.");
+                }
+                _webView.CoreWebView2.PostWebMessageAsJson(json);
+            },
+            cancellationToken);
+    }
+
     public void BeginShutdown()
     {
         DisableEnhancements();
@@ -145,6 +195,7 @@ public sealed class ChatWebViewService
             DisableEnhancements();
             UnsubscribeNavigation();
             _bridge.StatusChanged -= OnBridgeStatusChanged;
+            _bridge.SubmissionObserved -= OnBridgeSubmissionObserved;
             _bridge.Dispose();
         }
         finally
@@ -215,6 +266,9 @@ public sealed class ChatWebViewService
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
         DisableEnhancements();
+        PersonaContextChanged?.Invoke(
+            this,
+            new PersonaChatContextChangedEventArgs(null, invalidated: true));
     }
 
     private async void OnSourceChanged(object? sender, CoreWebView2SourceChangedEventArgs e)
@@ -230,6 +284,9 @@ public sealed class ChatWebViewService
         if (transition == WebDocumentTransition.TeardownAndDisable)
         {
             DisableEnhancements();
+            PersonaContextChanged?.Invoke(
+                this,
+                new PersonaChatContextChangedEventArgs(null, invalidated: true));
             return;
         }
         if (transition == WebDocumentTransition.AwaitNavigationCompletion)
@@ -248,10 +305,14 @@ public sealed class ChatWebViewService
                 await EnsureAdapterInjectedAsync();
             }
             await ApplyAppearanceAsync();
+            RaisePersonaContextChanged();
         }
         catch
         {
             DisableEnhancements();
+            PersonaContextChanged?.Invoke(
+                this,
+                new PersonaChatContextChangedEventArgs(null, invalidated: true));
         }
     }
 
@@ -268,6 +329,9 @@ public sealed class ChatWebViewService
         if (!ChatNavigationUrlPolicy.IsEnhancementEligible(source))
         {
             DisableEnhancements();
+            PersonaContextChanged?.Invoke(
+                this,
+                new PersonaChatContextChangedEventArgs(null, invalidated: true));
             return;
         }
 
@@ -278,11 +342,15 @@ public sealed class ChatWebViewService
             SetWebMessagesEnabled(true);
             await EnsureAdapterInjectedAsync();
             await ApplyAppearanceAsync();
+            RaisePersonaContextChanged();
         }
         catch
         {
             // Enhancements are optional. Keep native ChatGPT usable.
             DisableEnhancements();
+            PersonaContextChanged?.Invoke(
+                this,
+                new PersonaChatContextChangedEventArgs(null, invalidated: true));
         }
     }
 
@@ -305,6 +373,34 @@ public sealed class ChatWebViewService
     {
         BridgeStatusChanged?.Invoke(this, EventArgs.Empty);
         _ = ApplyAppearanceSafelyAsync();
+    }
+
+    private void OnBridgeSubmissionObserved(
+        object? sender,
+        BridgeSubmissionObservation observation) =>
+        SubmissionObserved?.Invoke(this, observation);
+
+    private void RaisePersonaContextChanged()
+    {
+        var context = CreatePersonaChatContext();
+        if (context is not null)
+        {
+            PersonaContextChanged?.Invoke(
+                this,
+                new PersonaChatContextChangedEventArgs(context, invalidated: false));
+        }
+    }
+
+    private PersonaChatContext? CreatePersonaChatContext()
+    {
+        var source = GetCurrentSource();
+        var document = _bridge.CurrentDocument;
+        if (source is null || document is null)
+            return null;
+        return new PersonaChatContext(
+            ChatNavigationUrlPolicy.Classify(source),
+            source.AbsolutePath,
+            document);
     }
 
     private async Task ApplyAppearanceSafelyAsync()
@@ -379,6 +475,12 @@ public sealed class ChatWebViewService
             routeRevision = document.RouteRevision,
             routeKind = route.ToString(),
             historyMode = _historyMode || route == ChatRouteKind.ProjectLanding,
+            composer = new
+            {
+                // Current live WebView compatibility evidence does not provide
+                // a privacy-safe empty signal for the contenteditable composer.
+                allowSafeEmpty = false
+            },
             compact = new
             {
                 enabled = compact.Enabled,

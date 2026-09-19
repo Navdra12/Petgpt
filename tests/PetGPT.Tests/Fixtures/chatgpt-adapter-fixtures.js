@@ -16,7 +16,10 @@ class FakeElement {
     this.parentElement = null;
     this.children = [];
     this.attributes = new Map();
+    this.listeners = new Map();
     this.id = "";
+    this._value = "";
+    this.placeholderShown = false;
   }
 
   appendChild(child) {
@@ -49,6 +52,35 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
+  get value() {
+    return this._value;
+  }
+
+  set value(next) {
+    this._value = String(next);
+    if (this._value.length > 0) this.placeholderShown = false;
+  }
+
+  hasAttribute(name) {
+    return this.attributes.has(name);
+  }
+
+  addEventListener(name, listener) {
+    const listeners = this.listeners.get(name) || [];
+    listeners.push(listener);
+    this.listeners.set(name, listeners);
+  }
+
+  removeEventListener(name, listener) {
+    this.listeners.set(name, (this.listeners.get(name) || []).filter((item) => item !== listener));
+  }
+
+  dispatchEvent(event) {
+    if (!event.target) event.target = this;
+    for (const listener of this.listeners.get(event.type) || []) listener(event);
+    return true;
+  }
+
   matches(selector) {
     if (selector === "main") return this.tagName === "main";
     if (selector === "form") return this.tagName === "form";
@@ -58,6 +90,13 @@ class FakeElement {
     if (selector === "[data-testid=\"stop-button\"]") {
       return this.getAttribute("data-testid") === "stop-button";
     }
+    if (selector === "[data-testid=\"send-button\"]") {
+      return this.getAttribute("data-testid") === "send-button";
+    }
+    if (selector === "[data-testid=\"regenerate-button\"]") {
+      return this.getAttribute("data-testid") === "regenerate-button";
+    }
+    if (selector === ":placeholder-shown") return this.placeholderShown;
     if (selector === "[data-petgpt-surface]") return this.attributes.has("data-petgpt-surface");
     return false;
   }
@@ -94,6 +133,7 @@ class FakeDocument {
     this.documentElement = new FakeElement("html", this);
     this.head = this.documentElement.appendChild(new FakeElement("head", this));
     this.body = this.documentElement.appendChild(new FakeElement("body", this));
+    this.listeners = new Map();
   }
 
   createElement(tagName) {
@@ -130,18 +170,40 @@ class FakeDocument {
     visit(this.documentElement);
     return output;
   }
+
+  addEventListener(name, listener) {
+    const listeners = this.listeners.get(name) || [];
+    listeners.push(listener);
+    this.listeners.set(name, listeners);
+  }
+
+  removeEventListener(name, listener) {
+    this.listeners.set(name, (this.listeners.get(name) || []).filter((item) => item !== listener));
+  }
+
+  dispatchEvent(event) {
+    if (!event.target) event.target = this;
+    for (const listener of this.listeners.get(event.type) || []) listener(event);
+    return true;
+  }
 }
 
-function createHarness({ stop = true } = {}) {
+function createHarness({ stop = true, safeEmptyComposer = false } = {}) {
   const document = new FakeDocument();
   const appRoot = document.body.appendChild(new FakeElement("div", document));
   const main = appRoot.appendChild(new FakeElement("main", document));
   const explicitlyColored = main.appendChild(new FakeElement("p", document));
   explicitlyColored.setAttribute("style", "color:#111111");
   const form = appRoot.appendChild(new FakeElement("form", document));
-  const composer = form.appendChild(new FakeElement("div", document));
+  const composer = form.appendChild(new FakeElement(safeEmptyComposer ? "textarea" : "div", document));
   composer.setAttribute("id", "prompt-textarea");
   composer.setAttribute("role", "textbox");
+  if (safeEmptyComposer) {
+    composer.setAttribute("placeholder", "Message");
+    composer.placeholderShown = true;
+  }
+  const sendButton = form.appendChild(new FakeElement("button", document));
+  sendButton.setAttribute("data-testid", "send-button");
   let stopButton = null;
   if (stop) {
     stopButton = form.appendChild(new FakeElement("button", document));
@@ -195,11 +257,19 @@ function createHarness({ stop = true } = {}) {
     location: window.location,
     MutationObserver: FakeMutationObserver,
     queueMicrotask: (callback) => callback(),
+    TextEncoder,
+    Event: class Event {
+      constructor(type, options = {}) {
+        this.type = type;
+        this.bubbles = Boolean(options.bubbles);
+        this.target = null;
+      }
+    },
     console
   });
   vm.runInContext(adapterSource, context, { filename: "chatgpt-adapter.js" });
 
-  const configure = (routeRevision) => {
+  const configure = (routeRevision, allowSafeEmpty = false) => {
     webviewListeners.get("message")({
       data: {
         v: 1,
@@ -207,6 +277,7 @@ function createHarness({ stop = true } = {}) {
         documentSession: "0123456789abcdef",
         routeRevision,
         historyMode: false,
+        composer: { allowSafeEmpty },
         compact: { enabled: true, css: "main{max-width:100%}" },
         theme: { enabled: false, css: null }
       }
@@ -219,9 +290,31 @@ function createHarness({ stop = true } = {}) {
     main,
     form,
     composer,
+    sendButton,
     messages,
     observers,
     configure,
+    hostMessage(data) {
+      webviewListeners.get("message")({ data });
+    },
+    submit() {
+      form.dispatchEvent({ type: "submit", target: form, isComposing: false });
+    },
+    pressEnter() {
+      composer.dispatchEvent({
+        type: "keydown",
+        target: composer,
+        key: "Enter",
+        shiftKey: false,
+        isComposing: false
+      });
+    },
+    degrade() {
+      const active = observers.filter((observer) => !observer.disconnected);
+      for (const observer of active) {
+        observer.emit([{ addedNodes: Array.from({ length: 201 }, () => new FakeElement("div", document)) }]);
+      }
+    },
     removeStop() {
       stopButton?.remove();
       stopButton = null;
@@ -310,6 +403,121 @@ check("top-level root replacement re-establishes bounded landmarks", () => {
   for (const observer of rootObservers) observer.emit([{ addedNodes: [replacement.replacement] }]);
   assert.equal(replacement.replacementMain.getAttribute("data-petgpt-surface"), "page");
   assert.equal(replacement.replacementComposer.getAttribute("data-petgpt-surface"), "composer");
+});
+
+check("native submit reports only structural activity and no prompt text", () => {
+  const harness = createHarness();
+  harness.composer.value = "private draft that must not cross the bridge";
+  harness.configure(0);
+  harness.messages.length = 0;
+  harness.submit();
+  const submit = harness.messages.find((message) => message.kind === "activity" && message.payload.event === "submit");
+  assert.ok(submit);
+  assert.deepEqual(Object.keys(submit.payload).sort(), ["event", "generationSerial"]);
+  assert.equal(JSON.stringify(harness.messages).includes("private draft"), false);
+});
+
+check("an Enter keydown alone is not accepted as submission evidence", () => {
+  const harness = createHarness({ stop: false });
+  harness.configure(0);
+  harness.messages.length = 0;
+  harness.pressEnter();
+  assert.equal(harness.messages.some((message) => message.payload?.event === "submit"), false);
+});
+
+check("stage is rejected while safe-empty capability is unavailable", () => {
+  const harness = createHarness();
+  harness.configure(0);
+  harness.messages.length = 0;
+  harness.hostMessage({
+    v: 1,
+    op: "stagePersona",
+    documentSession: "0123456789abcdef",
+    routeRevision: 0,
+    requestId: "1111111111111111",
+    text: "PetGPT owned context"
+  });
+  assert.equal(harness.composer.value, "");
+  assert.ok(harness.messages.some((message) => message.kind === "activity" &&
+    message.payload.event === "stageResult" && message.payload.result === "unsupported"));
+});
+
+check("safe-empty structural support still requires host compatibility opt-in", () => {
+  const harness = createHarness({ safeEmptyComposer: true, stop: false });
+  harness.configure(0);
+  const ready = harness.messages.find((message) => message.kind === "ready");
+  assert.equal(ready.payload.capabilities.composerEmpty, false);
+});
+
+check("safe-empty stage reports matching result and never submits", () => {
+  const harness = createHarness({ safeEmptyComposer: true, stop: false });
+  harness.configure(0, true);
+  harness.messages.length = 0;
+  harness.hostMessage({
+    v: 1,
+    op: "stagePersona",
+    documentSession: "0123456789abcdef",
+    routeRevision: 0,
+    requestId: "2222222222222222",
+    text: "PetGPT owned context"
+  });
+  assert.equal(harness.composer.value, "PetGPT owned context");
+  assert.ok(harness.messages.some((message) => message.kind === "activity" &&
+    message.payload.event === "stageResult" && message.payload.requestId === "2222222222222222" &&
+    message.payload.result === "staged"));
+  const stageIndex = harness.messages.findIndex((message) => message.payload?.event === "stageResult");
+  const nonemptyIndex = harness.messages.findIndex((message) =>
+    message.payload?.event === "composer" && message.payload.empty === false);
+  assert.ok(stageIndex >= 0 && nonemptyIndex >= 0 && stageIndex < nonemptyIndex);
+  assert.equal(harness.messages.some((message) => message.payload?.event === "submit"), false);
+});
+
+check("stale stage request after reconfigure cannot mutate the composer", () => {
+  const harness = createHarness({ safeEmptyComposer: true, stop: false });
+  harness.configure(0, true);
+  harness.configure(1, true);
+  harness.hostMessage({
+    v: 1,
+    op: "stagePersona",
+    documentSession: "0123456789abcdef",
+    routeRevision: 1,
+    requestId: "4444444444444444",
+    text: "current context"
+  });
+  assert.equal(harness.composer.value, "current context");
+  harness.composer.value = "";
+  harness.composer.placeholderShown = true;
+  harness.messages.length = 0;
+  harness.hostMessage({
+    v: 1,
+    op: "stagePersona",
+    documentSession: "0123456789abcdef",
+    routeRevision: 0,
+    requestId: "3333333333333333",
+    text: "stale context"
+  });
+  assert.equal(harness.composer.value, "");
+  assert.equal(harness.messages.some((message) => message.payload?.requestId === "3333333333333333"), false);
+});
+
+check("adapter degradation revokes staging before any composer mutation", () => {
+  const harness = createHarness({ safeEmptyComposer: true, stop: false });
+  harness.configure(0, true);
+  harness.degrade();
+  const degraded = harness.messages.findLast((message) => message.kind === "ready");
+  assert.equal(degraded.payload.capabilities.submission, false);
+  harness.messages.length = 0;
+  harness.hostMessage({
+    v: 1,
+    op: "stagePersona",
+    documentSession: "0123456789abcdef",
+    routeRevision: 0,
+    requestId: "5555555555555555",
+    text: "must not be staged"
+  });
+  assert.equal(harness.composer.value, "");
+  assert.ok(harness.messages.some((message) => message.payload?.event === "stageResult" &&
+    message.payload.requestId === "5555555555555555" && message.payload.result === "unsupported"));
 });
 
 const failed = checks.filter((entry) => !entry.passed);

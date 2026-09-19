@@ -19,6 +19,7 @@
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="36"/>
+                <RowDefinition Height="34"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
@@ -63,7 +64,41 @@
                 </StackPanel>
             </Grid>
 
-            <Grid Grid.Row="1">
+            <Grid Grid.Row="1" Background="#F7F7F7">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="PersonaStatusText"
+                           Margin="12,0,8,0"
+                           VerticalAlignment="Center"
+                           Foreground="#555555"
+                           FontSize="11"
+                           TextTrimming="CharacterEllipsis"/>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Margin="0,2,6,2">
+                    <Button x:Name="ApplyPersonaButton"
+                            Content="Apply"
+                            Padding="9,3"
+                            Margin="0,0,4,0"
+                            ToolTip="Apply character to this chat"
+                            Click="OnApplyPersona"/>
+                    <Button x:Name="ReviewPersonaButton"
+                            Content="Review"
+                            Padding="9,3"
+                            Margin="0,0,4,0"
+                            ToolTip="Review exact character context"
+                            Click="OnReviewPersona"/>
+                    <Button x:Name="CopyPersonaButton"
+                            Content="Copy context"
+                            Padding="9,3"
+                            ToolTip="Copy character context for manual paste and send"
+                            Click="OnCopyPersona"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2">
                 <wv2:WebView2 x:Name="ChatWebView"/>
 
                 <Border x:Name="BrowserStatusPanel"

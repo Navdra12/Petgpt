@@ -774,8 +774,9 @@ eligible route, never auto-sending context. Reactions Off reconfigures the
 observer, invalidates live correlation, and cancels the current model reaction
 while retaining local system animation. Reactions On baselines current
 structure before observation, so it does not replay history. Control-marker
-visibility reconfigures live without reload. Legacy truthfully reports that it
-has no persona, reactions, or theme.
+visibility is a generic presentation preference and reconfigures live without
+reload, independently of reaction dispatch or the selected pack's capabilities.
+Legacy truthfully reports that it has no persona, reactions, or theme.
 
 FollowPet and Free are the only normal placement choices. FollowPet positions
 the visible bubble relative to the pet. Free restores the existing saved free
@@ -796,7 +797,7 @@ Automated T11 evidence from the final tree:
 - `AnimationStateEngineTests`: **53/53**;
 - `ReactionProtocolTests`: **72/72**;
 - full C# suite: **596/596**;
-- Playwright marker/privacy suite: **39/39**;
+- Playwright marker/privacy suite: **41/41**;
 - offline adapter fixtures: **12/12**;
 - `node --check` passed for `chatgpt-adapter.js` and
   `pet-marker-bridge.js`;
@@ -808,21 +809,30 @@ Automated T11 evidence from the final tree:
 - the exact published `PetGPT.exe` remained alive and responsive for ten
   seconds with no immediate crash.
 
-Manual Windows T11 checks still required:
+Manual Windows T11 smoke passed in all exercised areas except one confirmed
+control-marker visibility defect: with bundled Legacy selected and reaction
+dispatch unavailable, both OFF and ON left a newly rendered canonical marker
+visible even though Apply and persistence succeeded. The cause was that
+`pet-marker-bridge.js` disconnected its sole observer whenever reaction dispatch
+was disabled, coupling generic marker presentation to reaction eligibility.
+The bridge now keeps the same bounded observer active for reserved-href
+recognition and visibility, limits its disabled-dispatch attribute observation
+to `href`, and gates assistant correlation, stabilization timers, capability,
+and reaction emission separately. Two test-first Playwright regressions failed
+on the original implementation and now prove live OFF/ON/OFF behavior for an
+existing and newly inserted canonical marker while dispatch stays disabled;
+they also prove no reaction emission, false capability, and no treatment of
+malformed, unsupported-r2, ordinary, or lookalike-host links. The complete
+marker/privacy suite passes **41/41**, adapter fixtures pass **12/12**, the full
+C# suite passes
+**596/596**, both production JavaScript syntax checks pass, and the clean
+Release publish/smoke remains healthy.
 
-1. `/`, `Ctrl+/`, and tray Commands reuse one native window; exercise `/pet
-   list`, sleep/wake, New, and History.
-2. Confirm slash text in ChatGPT's composer is not intercepted.
-3. Open Settings from tray/chat chrome, confirm one instance, Cancel isolation,
-   and valid Apply persistence across restart.
-4. Change/clear ChatHomeUrl and confirm New/History availability changes with
-   no current-chat reload.
-5. Toggle Compact, scale Legacy, Reduced Motion, marker visibility, and
-   FollowPet/Free; confirm persistence and no browser recreation.
-6. Confirm Legacy roleplay/reaction/theme status remains truthful.
-7. Exercise folder and optional `.petpack` import through T5 validation and
-   confirm it refreshes without auto-selection.
-8. Recheck ordinary Show/Hide, Reload, login/session preservation, drag, exact
-   Pet check state, and Exit.
+The valid-pack import check remains N/A until a real validated non-Legacy pack
+exists. Manual T11 found no confirmed functional CompactMode defect; whether it
+still provides enough product value alongside ChatGPT's responsive layout is a
+deferred, non-blocking product question. The final live marker retest remains
+pending for the user on the fixed publish, without reload: **OFF -> hidden**, then
+**ON -> visible**.
 
 T12 release/CI work has not started.

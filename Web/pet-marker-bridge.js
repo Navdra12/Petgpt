@@ -12,7 +12,7 @@
   const state = {
     active: true,
     configured: false,
-    enabled: false,
+    dispatchEnabled: false,
     showControlMarkers: false,
     documentSession: null,
     routeRevision: 0,
@@ -129,10 +129,10 @@
   };
 
   const stabilize = anchor => {
-    if (!state.active || !state.enabled || state.degraded || !anchor?.isConnected) return;
+    if (!state.active || state.degraded || !anchor?.isConnected) return;
     const href = markerHref(anchor);
     applyMarkerVisibility(anchor);
-    if (!isCanonicalMarker(href) || state.baselineAnchors.has(anchor)) return;
+    if (!isCanonicalMarker(href) || !state.dispatchEnabled || state.baselineAnchors.has(anchor)) return;
     const firstOwner = structuralOwner(anchor);
     if (state.generationSerial <= 0 && firstOwner) {
       state.baselineIds.add(firstOwner.id);
@@ -151,7 +151,7 @@
     };
     const timer = setTimeout(() => {
       state.pending.delete(anchor);
-      if (!state.active || !state.enabled || state.degraded || !anchor.isConnected ||
+      if (!state.active || !state.dispatchEnabled || state.degraded || !anchor.isConnected ||
           markerHref(anchor) !== identity.href ||
           state.documentSession !== identity.documentSession ||
           state.routeRevision !== identity.routeRevision ||
@@ -175,7 +175,7 @@
 
   const processQueue = () => {
     state.scheduled = false;
-    if (!state.active || !state.enabled || state.degraded) return;
+    if (!state.active || state.degraded) return;
     const batch = Array.from(state.queue).slice(0, MAX_BATCH);
     for (const anchor of batch) state.queue.delete(anchor);
     state.maximumBatchObserved = Math.max(state.maximumBatchObserved, batch.length);
@@ -237,12 +237,12 @@
   };
 
   const onMutations = records => {
-    if (!state.active || !state.enabled || state.degraded) return;
+    if (!state.active || state.degraded) return;
     for (const record of records) {
       if (record.type === "attributes") discover(record.target);
       const replacement = (record.removedNodes?.length || 0) > 0;
       for (const node of record.addedNodes || []) {
-        noteAssistantOwners(node, replacement);
+        if (state.dispatchEnabled) noteAssistantOwners(node, replacement);
         discover(node);
         if (state.degraded) return;
       }
@@ -253,7 +253,7 @@
   const baselineCurrentStructure = () => {
     let structuralCount = 0;
     walkElements(document.documentElement, element => {
-      if (element.matches?.('[data-message-author-role="assistant"][data-message-id]')) {
+      if (state.dispatchEnabled && element.matches?.('[data-message-author-role="assistant"][data-message-id]')) {
         const id = element.getAttribute("data-message-id");
         if (id && id.length <= 128 && /^[\x21-\x7e]+$/.test(id)) state.baselineIds.add(id);
         structuralCount += 1;
@@ -273,14 +273,16 @@
 
   const attachObserver = () => {
     disconnectObserver();
-    if (!state.active || !state.enabled || state.degraded) return;
+    if (!state.active || state.degraded) return;
     ensureStyle();
     state.observer = new MutationObserver(onMutations);
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["href", "data-message-author-role", "data-message-id", "aria-hidden", "hidden", "inert", "data-branch-state", "data-active"]
+      attributeFilter: state.dispatchEnabled
+        ? ["href", "data-message-author-role", "data-message-id", "aria-hidden", "hidden", "inert", "data-branch-state", "data-active"]
+        : ["href"]
     });
   };
 
@@ -319,16 +321,13 @@
     state.documentSession = configuration.documentSession;
     state.routeRevision = configuration.routeRevision;
     state.routeKind = configuration.routeKind || null;
-    state.enabled = configuration.enabled === true;
+    state.dispatchEnabled = configuration.enabled === true;
     state.showControlMarkers = configuration.showControlMarkers === true;
     baselineCurrentStructure();
-    if (state.enabled && !state.degraded) {
+    if (!state.degraded) {
       attachObserver();
-      post("activity", { event: "reactionCapability", available: true });
-    } else {
-      disconnectObserver();
-      post("activity", { event: "reactionCapability", available: false });
     }
+    post("activity", { event: "reactionCapability", available: state.dispatchEnabled && !state.degraded });
   };
 
   const observeTurn = generationSerial => {
@@ -369,7 +368,7 @@
   const teardown = () => {
     if (!state.active) return;
     state.active = false;
-    state.enabled = false;
+    state.dispatchEnabled = false;
     disconnectObserver();
     document.getElementById("petgpt-marker-style")?.remove();
     for (const anchor of document.querySelectorAll("[data-petgpt-control-marker]"))

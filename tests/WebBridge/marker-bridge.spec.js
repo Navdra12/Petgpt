@@ -30,6 +30,16 @@ async function boot(page, options = {}) {
   }
 }
 
+async function configureMarkerBridge(page, { enabled, show }) {
+  await page.evaluate(config => window.__petgptMarkerBridgeV1.reconfigure({
+    documentSession: "aaaaaaaaaaaaaaaa",
+    routeRevision: 0,
+    enabled: config.enabled === true,
+    showControlMarkers: config.show === true,
+    routeKind: "ProjectConversation"
+  }), { enabled, show });
+}
+
 async function addMessage(page, { id = "assistant-1", role = "assistant", href = marker, where = "plain", prepend = false } = {}) {
   const key = await page.evaluate(({ id, role, where, prepend }) => {
     const owner = document.createElement("article");
@@ -69,6 +79,9 @@ async function hydrateCompleteMessage(page, id = "hydrated-old") {
 }
 
 const reactions = page => page.evaluate(() => window.__petMessages.filter(message => message.kind === "reaction"));
+const reactionCapabilities = page => page.evaluate(() => window.__petMessages
+  .filter(message => message.kind === "activity" && message.payload?.event === "reactionCapability")
+  .map(message => message.payload.available));
 
 test("valid marker dispatches only after stabilization", async ({ page }) => {
   await boot(page); await addMessage(page); await page.waitForTimeout(170);
@@ -195,6 +208,47 @@ test("valid marker is hidden when control markers are off", async ({ page }) => 
 test("valid marker remains visible when control markers are on", async ({ page }) => { await boot(page, { show: true }); await addMessage(page); await page.waitForTimeout(20); expect(await page.locator("a").getAttribute("data-petgpt-control-marker")).toBe("visible"); });
 test("ordinary links are untouched", async ({ page }) => { await boot(page); await addMessage(page, { href: "https://example.com/" }); await page.waitForTimeout(20); expect(await page.locator("a").getAttribute("data-petgpt-control-marker")).toBeNull(); });
 
+test("control-marker visibility updates live while reaction dispatch stays disabled", async ({ page }) => {
+  await boot(page, { enabled: false, show: false });
+  await addMessage(page);
+  const canonical = page.locator("a");
+
+  await expect(canonical).toHaveAttribute("data-petgpt-control-marker", "hidden");
+  expect(await canonical.evaluate(anchor => getComputedStyle(anchor).display)).toBe("none");
+  expect(await reactions(page)).toHaveLength(0);
+  expect(await reactionCapabilities(page)).toEqual([false]);
+
+  await configureMarkerBridge(page, { enabled: false, show: true });
+
+  await expect(canonical).toHaveAttribute("data-petgpt-control-marker", "visible");
+  expect(await canonical.evaluate(anchor => getComputedStyle(anchor).display)).not.toBe("none");
+  expect(await reactions(page)).toHaveLength(0);
+  expect(await reactionCapabilities(page)).toEqual([false, false]);
+});
+
+test("disabled dispatch observes new canonical markers without touching invalid links", async ({ page }) => {
+  await boot(page, { enabled: false, show: false });
+  await addMessage(page, { id: "canonical" });
+  await addMessage(page, { id: "malformed", href: marker.replace("/end", "") });
+  await addMessage(page, { id: "unsupported", href: marker.replace("#r1/", "#r2/") });
+  await addMessage(page, { id: "ordinary", href: "https://example.com/" });
+  await addMessage(page, { id: "lookalike", href: marker.replace("petgpt.invalid", "petgpt.invalid.example") });
+  const anchors = page.locator("a");
+
+  await expect(anchors.nth(0)).toHaveAttribute("data-petgpt-control-marker", "hidden");
+  await expect(anchors.nth(1)).not.toHaveAttribute("data-petgpt-control-marker", /.+/);
+  await expect(anchors.nth(2)).not.toHaveAttribute("data-petgpt-control-marker", /.+/);
+  await expect(anchors.nth(3)).not.toHaveAttribute("data-petgpt-control-marker", /.+/);
+  await expect(anchors.nth(4)).not.toHaveAttribute("data-petgpt-control-marker", /.+/);
+
+  await configureMarkerBridge(page, { enabled: false, show: true });
+  await expect(anchors.nth(0)).toHaveAttribute("data-petgpt-control-marker", "visible");
+  await configureMarkerBridge(page, { enabled: false, show: false });
+  await expect(anchors.nth(0)).toHaveAttribute("data-petgpt-control-marker", "hidden");
+  expect(await reactions(page)).toHaveLength(0);
+  expect(await reactionCapabilities(page)).toEqual([false, false, false]);
+});
+
 test("response text getters are never read", async ({ page }) => {
   await boot(page);
   await page.evaluate(() => { for (const [prototype, name] of [[Node.prototype,"textContent"],[HTMLElement.prototype,"innerText"],[Element.prototype,"innerHTML"],[Element.prototype,"outerHTML"]]) Object.defineProperty(prototype,name,{configurable:true,get(){if(this.closest?.("[data-message-author-role]"))throw new Error(`forbidden ${name}`);return "";},set(){throw new Error(`forbidden set ${name}`);}}); const original=XMLSerializer.prototype.serializeToString; XMLSerializer.prototype.serializeToString=function(node){if(node?.closest?.("[data-message-author-role]"))throw new Error("forbidden serialization");return original.call(this,node);}; });
@@ -219,7 +273,7 @@ test("same-document landing to conversation preserves correlated turn", async ({
   await boot(page); await page.evaluate(() => window.__petgptMarkerBridgeV1.reconfigure({documentSession:"aaaaaaaaaaaaaaaa",routeRevision:1,enabled:true,showControlMarkers:false,routeKind:"ProjectConversation",preserveLiveTurn:true})); await addMessage(page); await page.waitForTimeout(170); const found=await reactions(page); expect(found).toHaveLength(1); expect(found[0].payload.generationSerial).toBe(1);
 });
 
-test("disabled setting installs no dispatching observer", async ({ page }) => { await boot(page, { enabled: false }); await addMessage(page); await page.waitForTimeout(170); expect(await reactions(page)).toHaveLength(0); });
+test("disabled setting emits no reactions", async ({ page }) => { await boot(page, { enabled: false }); await addMessage(page); await page.waitForTimeout(170); expect(await reactions(page)).toHaveLength(0); });
 
 test("payload contains only href generation serial and assistant id", async ({ page }) => {
   await boot(page); await addMessage(page); await page.waitForTimeout(170); expect(Object.keys((await reactions(page))[0].payload).sort()).toEqual(["assistantId","generationSerial","href"]);

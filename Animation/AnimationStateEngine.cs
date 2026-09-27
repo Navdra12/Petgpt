@@ -122,6 +122,9 @@ public sealed class AnimationStateEngine
                 if (_sleeping)
                     DropReaction();
                 break;
+            case PetEvent.ReducedMotionChanged reducedMotion:
+                _reducedMotion = reducedMotion.IsReducedMotion;
+                break;
             case PetEvent.PetChanged changed:
                 _pack = changed.Pack ?? throw new ArgumentNullException(nameof(changed.Pack));
                 _reducedMotion = changed.ReducedMotion;

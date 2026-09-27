@@ -3,6 +3,8 @@ using System.Text;
 using PetGPT.Characters;
 using PetGPT.Models;
 using PetGPT.Services;
+using PetGPT.Shell;
+using PetGPT.Windows;
 using Xunit;
 
 namespace PetGPT.Tests;
@@ -12,6 +14,584 @@ public sealed class NavigationAndCommandsTests
     private static readonly Uri Root = new("https://chatgpt.com/");
     private static readonly Uri ProjectHome = new("https://chatgpt.com/g/opaque-project/project");
     private static readonly Uri ProjectConversation = new("https://chatgpt.com/g/opaque-project/c/opaque-chat");
+
+    [Theory]
+    [InlineData("/pet", LocalCommandKind.OpenPetChooser, null)]
+    [InlineData("/pet list", LocalCommandKind.ListPets, null)]
+    [InlineData("/pet trixie", LocalCommandKind.SelectPet, "trixie")]
+    [InlineData("/pet sleep", LocalCommandKind.Sleep, null)]
+    [InlineData("/pet wake", LocalCommandKind.Wake, null)]
+    [InlineData("/theme", LocalCommandKind.OpenThemeSettings, null)]
+    [InlineData("/history", LocalCommandKind.History, null)]
+    [InlineData("/new", LocalCommandKind.NewPetChat, null)]
+    [InlineData("  /PET TRIXIE  ", LocalCommandKind.SelectPet, "trixie")]
+    [InlineData("/ThEmE", LocalCommandKind.OpenThemeSettings, null)]
+    public void LocalCommands_ParseToTypedLocalIntents(
+        string input,
+        LocalCommandKind expectedKind,
+        string? expectedPetId)
+    {
+        var result = LocalCommandRouter.Parse(input);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Intent);
+        Assert.Equal(expectedKind, result.Intent.Kind);
+        Assert.Equal(expectedPetId, result.Intent.PetId);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("/unknown")]
+    [InlineData("/pet trixie | calc")]
+    [InlineData("/new && something")]
+    [InlineData("/history; /new")]
+    [InlineData("$(calc)")]
+    [InlineData("`command`")]
+    [InlineData("/pet ../foo")]
+    [InlineData("/pet ..\\foo")]
+    [InlineData("/pet trixie\n/new")]
+    [InlineData("/pet trixie\r/new")]
+    [InlineData("/pet trixie extra")]
+    [InlineData("pet trixie")]
+    public void LocalCommands_RejectInvalidOrShellLookingInputWithoutRemoteFallback(string input)
+    {
+        var result = LocalCommandRouter.Parse(input);
+
+        Assert.False(result.Succeeded);
+        Assert.Null(result.Intent);
+        Assert.False(result.SubmitToChatGpt);
+        Assert.False(string.IsNullOrWhiteSpace(result.Message));
+    }
+
+    [Fact]
+    public void LocalCommands_RejectInputOver128Characters()
+    {
+        var result = LocalCommandRouter.Parse("/pet " + new string('a', 124));
+
+        Assert.False(result.Succeeded);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Theory]
+    [InlineData("/new", NavigationIntent.NewPetChat)]
+    [InlineData("/history", NavigationIntent.History)]
+    public async Task LocalCommandRouting_UsesExistingTypedNavigationOwner(
+        string input,
+        NavigationIntent expected)
+    {
+        var harness = new CommandHarness();
+
+        var result = await harness.Router.ExecuteAsync(input);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal([expected], harness.NavigationIntents);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Theory]
+    [InlineData("/pet sleep", true)]
+    [InlineData("/pet wake", false)]
+    public async Task LocalCommandRouting_SleepWakeEmitOnlyTypedLocalPetEvents(
+        string input,
+        bool expectedSleeping)
+    {
+        var harness = new CommandHarness();
+
+        var result = await harness.Router.ExecuteAsync(input);
+
+        var sleep = Assert.IsType<PetEvent.SleepChanged>(Assert.Single(harness.PetEvents));
+        Assert.Equal(expectedSleeping, sleep.IsSleeping);
+        Assert.Empty(harness.NavigationIntents);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Fact]
+    public async Task LocalCommandRouting_SelectPetUsesSelectionAuthorityWithCanonicalId()
+    {
+        var harness = new CommandHarness();
+
+        var result = await harness.Router.ExecuteAsync("/PET TRIXIE");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(["trixie"], harness.SelectedPetIds);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Fact]
+    public async Task LocalCommandRouting_ThemeOpensSettingsOnly()
+    {
+        var harness = new CommandHarness();
+
+        var result = await harness.Router.ExecuteAsync("/theme");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, harness.ThemeSettingsCalls);
+        Assert.Empty(harness.NavigationIntents);
+        Assert.Empty(harness.SelectedPetIds);
+        Assert.False(result.SubmitToChatGpt);
+    }
+
+    [Fact]
+    public void SettingsWorkingCopy_IsDetachedFromLiveSettings()
+    {
+        var live = new AppSettings { CompactMode = true, ChatHomeUrl = null };
+
+        var working = live.Copy();
+        working.CompactMode = false;
+        working.ChatHomeUrl = ProjectHome.AbsoluteUri;
+
+        Assert.True(live.CompactMode);
+        Assert.Null(live.ChatHomeUrl);
+    }
+
+    [Fact]
+    public async Task SettingsApply_InvalidCandidateBlocksAllCommit()
+    {
+        var harness = new SettingsApplyHarness { ValidationCode = "home_invalid" };
+        var candidate = harness.Live.Copy();
+        candidate.ChatHomeUrl = ProjectConversation.AbsoluteUri;
+
+        var result = await harness.Coordinator.ApplyAsync(candidate, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("home_invalid", result.DiagnosticCode);
+        Assert.Empty(harness.RuntimeSnapshots);
+        Assert.Equal(0, harness.PersistCalls);
+        Assert.Null(harness.Live.ChatHomeUrl);
+    }
+
+    [Fact]
+    public async Task SettingsApply_RuntimeFailureRestoresPersistedAndRuntimeSnapshots()
+    {
+        var harness = new SettingsApplyHarness { RuntimeSucceeds = false };
+        var candidate = harness.Live.Copy();
+        candidate.CompactMode = false;
+
+        var result = await harness.Coordinator.ApplyAsync(candidate, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(2, harness.RuntimeSnapshots.Count);
+        Assert.False(harness.RuntimeSnapshots[0].CompactMode);
+        Assert.True(harness.RuntimeSnapshots[1].CompactMode);
+        Assert.Equal(2, harness.PersistCalls);
+        Assert.False(harness.PersistedSnapshots[0].CompactMode);
+        Assert.True(harness.PersistedSnapshots[1].CompactMode);
+        Assert.True(harness.Live.CompactMode);
+    }
+
+    [Fact]
+    public async Task SettingsApply_PersistenceFailureRestoresPreviousRuntimeAndLiveSnapshot()
+    {
+        var harness = new SettingsApplyHarness { PersistenceSucceeds = false };
+        var candidate = harness.Live.Copy();
+        candidate.ThemesEnabled = false;
+
+        var result = await harness.Coordinator.ApplyAsync(candidate, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Single(harness.RuntimeSnapshots);
+        Assert.True(harness.RuntimeSnapshots[0].ThemesEnabled);
+        Assert.Equal(1, harness.PersistCalls);
+        Assert.True(harness.Live.ThemesEnabled);
+    }
+
+    [Fact]
+    public async Task SettingsApply_ValidCandidatePersistsOnceThenCommitsCompleteLiveSnapshot()
+    {
+        var harness = new SettingsApplyHarness();
+        var candidate = harness.Live.Copy();
+        candidate.ChatHomeUrl = ProjectHome.AbsoluteUri;
+        candidate.CompactMode = false;
+        candidate.PetOptions["legacy"] = new PetOptionSettings { Scale = 2, ReducedMotion = true };
+
+        var result = await harness.Coordinator.ApplyAsync(candidate, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.AppliedSnapshot);
+        Assert.Single(harness.RuntimeSnapshots);
+        Assert.Equal(1, harness.PersistCalls);
+        Assert.Equal(ProjectHome.AbsoluteUri, harness.Live.ChatHomeUrl);
+        Assert.False(harness.Live.CompactMode);
+        Assert.Equal(2, harness.Live.PetOptions["legacy"].Scale);
+        Assert.True(harness.Live.PetOptions["legacy"].ReducedMotion);
+    }
+
+    [Fact]
+    public async Task SettingsApply_PreparationEnrichmentIsPersistedCommittedAndReturnedForDialogRebase()
+    {
+        var harness = new SettingsApplyHarness
+        {
+            Prepare = snapshot =>
+            {
+                snapshot.ChatWindow.PlacementMode = "Free";
+                snapshot.ChatWindow.MonitorId = "DISPLAY-2";
+                snapshot.ChatWindow.XWithinWorkAreaDip = 120;
+                snapshot.ChatWindow.YWithinWorkAreaDip = 80;
+                snapshot.PetPlacement.MonitorId = "DISPLAY-2";
+                snapshot.PetPlacement.XWithinWorkAreaDip = 240;
+                snapshot.PetPlacement.YWithinWorkAreaDip = 160;
+                return true;
+            }
+        };
+
+        var result = await harness.Coordinator.ApplyAsync(harness.Live.Copy(), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(120, result.AppliedSnapshot!.ChatWindow.XWithinWorkAreaDip);
+        Assert.Equal(240, result.AppliedSnapshot.PetPlacement.XWithinWorkAreaDip);
+        Assert.Equal(120, harness.PersistedSnapshots.Single().ChatWindow.XWithinWorkAreaDip);
+        Assert.Equal(240, harness.Live.PetPlacement.XWithinWorkAreaDip);
+    }
+
+    [Fact]
+    public async Task SettingsApply_RuntimeGeometrySaveCannotQueuePreCommitPreferences()
+    {
+        using var directory = new TemporaryDirectory();
+        var service = new SettingsService(directory.Path, TimeSpan.FromHours(1));
+        var live = new AppSettings { CompactMode = true };
+        var coordinator = new SettingsApplyCoordinator(
+            live,
+            _ => null,
+            (_, _) => Task.FromResult(true),
+            (_, _, _) =>
+            {
+                service.RequestSave(live);
+                return Task.FromResult(true);
+            },
+            async (snapshot, token) =>
+                (await service.SaveImmediateAsync(snapshot, token)).Succeeded);
+        var candidate = live.Copy();
+        candidate.CompactMode = false;
+
+        var result = await coordinator.ApplyAsync(candidate, CancellationToken.None);
+        await service.FlushAsync(CancellationToken.None);
+        var persisted = new SettingsService(directory.Path, TimeSpan.Zero).Load().Settings;
+
+        Assert.True(result.Succeeded);
+        Assert.False(persisted.CompactMode);
+    }
+
+    [Fact]
+    public async Task SettingsApply_GeometrySaveDuringImmediateWriteCannotQueuePreCommitPreferences()
+    {
+        using var directory = new TemporaryDirectory();
+        var writeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new SettingsService(
+            directory.Path,
+            TimeSpan.FromHours(1),
+            async token =>
+            {
+                writeEntered.TrySetResult();
+                await releaseWrite.Task.WaitAsync(token);
+            });
+        var live = new AppSettings { CompactMode = true };
+        var coordinator = new SettingsApplyCoordinator(
+            live,
+            _ => null,
+            (_, _) => Task.FromResult(true),
+            (_, _, _) => Task.FromResult(true),
+            async (snapshot, token) =>
+                (await service.SaveImmediateAsync(snapshot, token)).Succeeded);
+        var candidate = live.Copy();
+        candidate.CompactMode = false;
+
+        var pending = coordinator.ApplyAsync(candidate, CancellationToken.None);
+        await writeEntered.Task;
+        live.ChatWindow.PlacementMode = "Free";
+        live.ChatWindow.XWithinWorkAreaDip = 333;
+        live.ChatWindow.YWithinWorkAreaDip = 222;
+        service.RequestSave(live);
+        releaseWrite.TrySetResult();
+        var result = await pending;
+        Assert.True(result.Succeeded);
+        await service.FlushAsync(CancellationToken.None);
+        var persisted = new SettingsService(directory.Path, TimeSpan.Zero).Load().Settings;
+
+        Assert.False(persisted.CompactMode);
+        Assert.Equal(333, result.AppliedSnapshot!.ChatWindow.XWithinWorkAreaDip);
+        Assert.Equal(333, persisted.ChatWindow.XWithinWorkAreaDip);
+    }
+
+    [Fact]
+    public async Task SettingsApply_RuntimeReceivesPreviousSnapshotForFinalIdentityCommit()
+    {
+        var live = new AppSettings();
+        live.Roleplay.Enabled = true;
+        AppSettings? runtimePrevious = null;
+        AppSettings? runtimeCandidate = null;
+        var coordinator = new SettingsApplyCoordinator(
+            live,
+            _ => null,
+            (_, _) => Task.FromResult(true),
+            (candidate, previous, _) =>
+            {
+                runtimeCandidate = candidate.Copy();
+                runtimePrevious = previous.Copy();
+                return Task.FromResult(true);
+            },
+            (_, _) => Task.FromResult(true));
+        var requested = live.Copy();
+        requested.Roleplay.Enabled = false;
+
+        var result = await coordinator.ApplyAsync(requested, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.True(runtimePrevious!.Roleplay.Enabled);
+        Assert.False(runtimeCandidate!.Roleplay.Enabled);
+    }
+
+    [Fact]
+    public async Task SettingsApply_CancellationRollsBackRuntimeAndDoesNotMutateLiveSnapshot()
+    {
+        var live = new AppSettings();
+        var runtime = new List<AppSettings>();
+        var coordinator = new SettingsApplyCoordinator(
+            live,
+            _ => null,
+            (snapshot, _) => Task.FromResult(true),
+            (snapshot, _, _) =>
+            {
+                runtime.Add(snapshot.Copy());
+                return Task.FromResult(true);
+            },
+            async (_, token) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return true;
+            });
+        var candidate = live.Copy();
+        candidate.CompactMode = false;
+        using var cancellation = new CancellationTokenSource();
+        var pending = coordinator.ApplyAsync(candidate, cancellation.Token);
+
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Single(runtime);
+        Assert.True(runtime[0].CompactMode);
+        Assert.True(live.CompactMode);
+    }
+
+    [Theory]
+    [InlineData(0.5, true)]
+    [InlineData(1.0, true)]
+    [InlineData(2.0, true)]
+    [InlineData(0.49, false)]
+    [InlineData(2.01, false)]
+    public void SettingsCandidateValidation_EnforcesPerPetScaleRange(double scale, bool expected)
+    {
+        using var directory = new TemporaryDirectory();
+        var service = new SettingsService(directory.Path, TimeSpan.FromHours(1));
+        var candidate = new AppSettings();
+        candidate.PetOptions["legacy"] = new PetOptionSettings { Scale = scale };
+
+        var result = service.ValidateCandidate(candidate);
+
+        Assert.Equal(expected, result.Succeeded);
+    }
+
+    [Fact]
+    public async Task SettingsImmediateSave_ValidatesAndFlushesCompleteSnapshot()
+    {
+        using var directory = new TemporaryDirectory();
+        var service = new SettingsService(directory.Path, TimeSpan.FromHours(1));
+        var candidate = new AppSettings
+        {
+            ChatHomeUrl = ProjectHome.AbsoluteUri,
+            CompactMode = false
+        };
+
+        var result = await service.SaveImmediateAsync(candidate, CancellationToken.None);
+        var loaded = new SettingsService(directory.Path, TimeSpan.Zero).Load().Settings;
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(ProjectHome.AbsoluteUri, loaded.ChatHomeUrl);
+        Assert.False(loaded.CompactMode);
+    }
+
+    [Fact]
+    public async Task SettingsImmediateSave_PreservesNewerSnapshotQueuedWhileAtomicWriteIsBlocked()
+    {
+        using var directory = new TemporaryDirectory();
+        var writeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var service = new SettingsService(
+            directory.Path,
+            TimeSpan.FromHours(1),
+            async cancellationToken =>
+            {
+                writeEntered.TrySetResult();
+                await releaseWrite.Task.WaitAsync(cancellationToken);
+            });
+        var immediate = new AppSettings { CompactMode = false };
+        var newer = new AppSettings { CompactMode = true, ThemesEnabled = false };
+
+        var pending = service.SaveImmediateAsync(immediate, CancellationToken.None);
+        await writeEntered.Task;
+        service.RequestSave(newer);
+        releaseWrite.TrySetResult();
+        Assert.True((await pending).Succeeded);
+        await service.FlushAsync(CancellationToken.None);
+        var loaded = new SettingsService(directory.Path, TimeSpan.Zero).Load().Settings;
+
+        Assert.True(loaded.CompactMode);
+        Assert.False(loaded.ThemesEnabled);
+    }
+
+    [Fact]
+    public async Task SettingsMutationGate_SerializesSelectionBehindSettingsCommit()
+    {
+        using var gate = new SettingsMutationGate();
+        var applyEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseApply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selectionEntered = false;
+
+        var apply = gate.RunAsync(async _ =>
+        {
+            applyEntered.TrySetResult();
+            await releaseApply.Task;
+            return true;
+        }, CancellationToken.None);
+        await applyEntered.Task;
+        var selection = gate.RunAsync(_ =>
+        {
+            selectionEntered = true;
+            return Task.FromResult(true);
+        }, CancellationToken.None);
+
+        await Task.Yield();
+        Assert.False(selectionEntered);
+        releaseApply.TrySetResult();
+        Assert.True(await apply);
+        Assert.True(await selection);
+        Assert.True(selectionEntered);
+    }
+
+    [Fact]
+    public void SettingsPetPresentationPlan_UsesCandidateScaleAndMotionForChangedExactPack()
+    {
+        var candidate = new AppSettings { SelectedPetId = "robot" };
+        candidate.SelectedPackVersions["robot"] = "2.0.0";
+        candidate.PetOptions["robot"] = new PetOptionSettings
+        {
+            Scale = 1.75,
+            ReducedMotion = true
+        };
+
+        var plan = SettingsPetPresentationPlan.Create(
+            candidate,
+            currentPetId: "legacy",
+            currentVersion: "1.0.0");
+
+        Assert.True(plan.RequiresSelection);
+        Assert.Equal("robot", plan.PetId);
+        Assert.Equal("2.0.0", plan.Version);
+        Assert.Equal(1.75, plan.Scale);
+        Assert.True(plan.ReducedMotion);
+    }
+
+    [Fact]
+    public void HomeRuntimeReconfiguration_ChangesFutureNavigationWithoutNavigatingCurrentPage()
+    {
+        var harness = new NavigationHarness(null, ProjectConversation);
+
+        var result = harness.Service.ReconfigureHome(ProjectHome.AbsoluteUri);
+
+        Assert.True(result);
+        Assert.True(harness.Service.HasConfiguredHome);
+        Assert.Empty(harness.Navigations);
+    }
+
+    [Fact]
+    public void HomeRuntimeReconfiguration_ClearingHomeDisablesNewAndHistoryWithoutNavigation()
+    {
+        var harness = new NavigationHarness(ProjectHome.AbsoluteUri, ProjectConversation);
+
+        var result = harness.Service.ReconfigureHome(null);
+
+        Assert.True(result);
+        Assert.False(harness.Service.HasConfiguredHome);
+        Assert.Empty(harness.Navigations);
+    }
+
+    [Fact]
+    public void HomeRuntimeReconfiguration_RejectsConversationUrlAndKeepsPriorHome()
+    {
+        var harness = new NavigationHarness(ProjectHome.AbsoluteUri, ProjectConversation);
+
+        var result = harness.Service.ReconfigureHome(ProjectConversation.AbsoluteUri);
+
+        Assert.False(result);
+        Assert.True(harness.Service.HasConfiguredHome);
+        Assert.Empty(harness.Navigations);
+    }
+
+    [Fact]
+    public void UninitializedBrowserHomeReconfiguration_ChangesOnlyFutureInitialTarget()
+    {
+        var state = new ChatWebViewNavigationState(null);
+
+        var result = state.ReconfigureHome(ProjectHome.AbsoluteUri);
+
+        Assert.True(result);
+        Assert.Equal(ProjectHome, state.InitialNavigationUri);
+        Assert.Null(state.CurrentUri);
+    }
+
+    [Fact]
+    public void ProjectInstructionsCopy_UsesOnlyBundledAppOwnedInstructions()
+    {
+        string? copied = null;
+
+        var result = ProjectInstructionsCopy.TryCopy(text =>
+        {
+            copied = text;
+            return true;
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(copied);
+        Assert.StartsWith("# PetChats Project Instructions", copied, StringComparison.Ordinal);
+        Assert.Contains("PetGPT does not edit the project", copied, StringComparison.Ordinal);
+        Assert.DoesNotContain("%LOCALAPPDATA%", copied, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ProjectInstructionsCopy_ClipboardFailureIsBoundedAndLocal()
+    {
+        var result = ProjectInstructionsCopy.TryCopy(_ => false);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("clipboard_unavailable", result.DiagnosticCode);
+    }
+
+    [Theory]
+    [InlineData(0.5, 75, 50)]
+    [InlineData(1.0, 150, 100)]
+    [InlineData(2.0, 300, 200)]
+    public void PetScalePolicy_ScalesPresentationWithoutChangingAspectRatio(
+        double scale,
+        double expectedWidth,
+        double expectedHeight)
+    {
+        var size = PetScalePolicy.GetScaledSize(new CharacterPresentation(150, 100, 0.5, 1), scale);
+
+        Assert.Equal(expectedWidth, size.Width);
+        Assert.Equal(expectedHeight, size.Height);
+    }
+
+    [Theory]
+    [InlineData(0.49)]
+    [InlineData(2.01)]
+    [InlineData(double.NaN)]
+    public void PetScalePolicy_RejectsInvalidScale(double scale)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            PetScalePolicy.GetScaledSize(new CharacterPresentation(150, 100, 0.5, 1), scale));
+    }
 
     [Theory]
     [InlineData("https://chatgpt.com/")]
@@ -717,5 +1297,95 @@ public sealed class NavigationAndCommandsTests
         public bool ConfirmLeave { get; set; } = true;
         public int PromptCalls { get; private set; }
         public int GlobalNewChatCalls { get; private set; }
+    }
+
+    private sealed class CommandHarness
+    {
+        public CommandHarness()
+        {
+            Router = new LocalCommandRouter(new LocalCommandActions(
+                OpenPetChooserAsync: () =>
+                {
+                    PetChooserCalls++;
+                    return Task.CompletedTask;
+                },
+                GetInstalledPacks: () => [],
+                SelectPetByIdAsync: (id, _) =>
+                {
+                    SelectedPetIds.Add(id);
+                    return Task.FromResult(PetSelectionResult.Selected());
+                },
+                RaisePetEvent: PetEvents.Add,
+                OpenThemeSettingsAsync: () =>
+                {
+                    ThemeSettingsCalls++;
+                    return Task.CompletedTask;
+                },
+                NavigateAsync: (intent, _) =>
+                {
+                    NavigationIntents.Add(intent);
+                    return Task.FromResult(NavigationResult.Navigated);
+                }));
+        }
+
+        public LocalCommandRouter Router { get; }
+        public List<NavigationIntent> NavigationIntents { get; } = [];
+        public List<PetEvent> PetEvents { get; } = [];
+        public List<string> SelectedPetIds { get; } = [];
+        public int PetChooserCalls { get; private set; }
+        public int ThemeSettingsCalls { get; private set; }
+    }
+
+    private sealed class SettingsApplyHarness
+    {
+        public SettingsApplyHarness()
+        {
+            Coordinator = new SettingsApplyCoordinator(
+                Live,
+                _ => ValidationCode,
+                (snapshot, _) => Task.FromResult(Prepare(snapshot)),
+                (snapshot, _, _) =>
+                {
+                    RuntimeSnapshots.Add(snapshot.Copy());
+                    var succeeds = RuntimeSucceeds;
+                    RuntimeSucceeds = true;
+                    return Task.FromResult(succeeds);
+                },
+                (snapshot, _) =>
+                {
+                    PersistCalls++;
+                    PersistedSnapshots.Add(snapshot.Copy());
+                    return Task.FromResult(PersistenceSucceeds);
+                });
+        }
+
+        public AppSettings Live { get; } = new();
+        public SettingsApplyCoordinator Coordinator { get; }
+        public List<AppSettings> RuntimeSnapshots { get; } = [];
+        public List<AppSettings> PersistedSnapshots { get; } = [];
+        public Func<AppSettings, bool> Prepare { get; set; } = _ => true;
+        public string? ValidationCode { get; set; }
+        public bool RuntimeSucceeds { get; set; } = true;
+        public bool PersistenceSucceeds { get; set; } = true;
+        public int PersistCalls { get; private set; }
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "PetGPT-T11-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+                Directory.Delete(Path, recursive: true);
+        }
     }
 }

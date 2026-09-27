@@ -711,3 +711,118 @@ was then stopped by the smoke harness. Manual
 end-to-end reaction animation remains unavailable with the bundled Legacy pack,
 which intentionally has no persona or reactions. T11 command/settings work has
 not started.
+
+## T11 native commands and Settings — 2026-09-20
+
+T11 completes the user-facing native PetGPT control surface. The chat chrome
+now has a `/` command button, `Ctrl+/` shortcut, and Settings gear; the tray has
+functional PetGPT Commands and Settings entries in addition to Show/Hide,
+New PetChat, History, the exact-version Pet submenu, and Exit. `AppLifetime`
+owns at most one Command window and one Settings window, reactivates an existing
+instance, and closes both during ordered application shutdown without making
+ordinary window close an application Exit.
+
+`LocalCommandRouter` implements a deterministic, one-line, 128-character local
+grammar for `/pet`, `/pet list`, `/pet <id>`, `/pet sleep`, `/pet wake`,
+`/theme`, `/history`, and `/new`. Verbs are case-insensitive and character IDs
+are canonicalized to lowercase. Pipes, chaining, quoting, substitution,
+multiline input, traversal-looking paths, unknown input, and extra arguments
+produce only bounded native errors. There is no parser outcome or router seam
+that submits to ChatGPT. Slash-looking text typed in ChatGPT's own composer is
+untouched and remains an ordinary ChatGPT message.
+
+Settings edits a detached schema-v2 working copy. Cancel or normal close has no
+live, persisted, browser, theme, persona, or animation effect. Apply validates
+and enriches the complete detached candidate, stages that candidate as the
+shared snapshot so concurrent geometry saves cannot carry stale preferences,
+performs one immediate atomic settings write/flush, then runs fallible geometry
+before the final persona/reaction identity commit. Runtime or persistence
+failure restores the prior live/runtime snapshot and does not leave the failed
+candidate queued for a later save. The successful snapshot, including geometry
+captured during Apply, is rebased into the still-open Settings dialog.
+Schema remains 2; legacy `settings.json` and the WebView2 profile remain
+untouched.
+
+The PetChats home accepts only the existing exact project-landing policy and
+may be cleared. Applying a changed home updates future initial/New/History
+behavior and tray/chrome availability without navigating or reloading the
+current conversation. The bundled Project Instructions are an embedded,
+app-owned resource copied only after an explicit native button action; PetGPT
+does not inspect or edit remote Project/global instructions or use a project
+backend API.
+
+Character selection continues through `PetSelectionService`. `/pet <id>`
+selects the sole installed exact version, or an already configured exact
+version; multiple unconfigured versions fail as ambiguous rather than choosing
+an implicit latest. Settings exposes every exact version. Folder and `.petpack`
+imports use `CharacterCatalog.ImportAsync`, refresh the chooser and tray
+catalog after success, preserve the checked exact tuple, and never auto-select
+the imported pack. Failed imports retain the existing catalog and selection
+and show only bounded diagnostic codes.
+
+Compact and theme preferences reconfigure live layered appearance without
+navigation or WebView recreation. Per-pet scale 0.5–2.0 resizes around the
+validated normalized anchor and reuses the existing monitor/work-area clamp.
+Reduced Motion uses a typed runtime event and player toggle that preserves the
+current semantic animation state, playback identity, and reaction lease while
+switching moving sheets to deterministic frame zero; turning it off restores
+ordinary scheduling without restarting the lease.
+
+Roleplay Off cancels outstanding staging and moves `PersonaSession` inactive;
+Roleplay On rebuilds a fresh activatable identity only for a supported pack and
+eligible route, never auto-sending context. Reactions Off reconfigures the
+observer, invalidates live correlation, and cancels the current model reaction
+while retaining local system animation. Reactions On baselines current
+structure before observation, so it does not replay history. Control-marker
+visibility reconfigures live without reload. Legacy truthfully reports that it
+has no persona, reactions, or theme.
+
+FollowPet and Free are the only normal placement choices. FollowPet positions
+the visible bubble relative to the pet. Free restores the existing saved free
+placement; when none exists, the current usable bubble position is captured.
+The migration-only `Remembered` value is not exposed.
+
+T10 remains complete: its focused native suite is 72/72, Playwright privacy and
+negative suite 39/39, adapter fixtures 12/12, and both production JavaScript
+syntax checks pass. Live persona/reaction E2E remains intentionally deferred
+because the production catalog contains only Legacy, with no persona,
+reactions, or theme; T11 does not treat that limitation as a blocker or add a
+sample production pack.
+
+Automated T11 evidence from the final tree:
+
+- `NavigationAndCommandsTests`: **158/158**;
+- `PersonaSessionTests`: **96/96**;
+- `AnimationStateEngineTests`: **53/53**;
+- `ReactionProtocolTests`: **72/72**;
+- full C# suite: **596/596**;
+- Playwright marker/privacy suite: **39/39**;
+- offline adapter fixtures: **12/12**;
+- `node --check` passed for `chatgpt-adapter.js` and
+  `pet-marker-bridge.js`;
+- Release build: 0 warnings, 0 errors;
+- clean Release publish contained all five production Web assets, only bundled
+  `Pets/legacy`, the emergency placeholder, and the embedded Project
+  Instructions resource, with no tests, Playwright files, `node_modules`, user
+  packs, or synthetic packs;
+- the exact published `PetGPT.exe` remained alive and responsive for ten
+  seconds with no immediate crash.
+
+Manual Windows T11 checks still required:
+
+1. `/`, `Ctrl+/`, and tray Commands reuse one native window; exercise `/pet
+   list`, sleep/wake, New, and History.
+2. Confirm slash text in ChatGPT's composer is not intercepted.
+3. Open Settings from tray/chat chrome, confirm one instance, Cancel isolation,
+   and valid Apply persistence across restart.
+4. Change/clear ChatHomeUrl and confirm New/History availability changes with
+   no current-chat reload.
+5. Toggle Compact, scale Legacy, Reduced Motion, marker visibility, and
+   FollowPet/Free; confirm persistence and no browser recreation.
+6. Confirm Legacy roleplay/reaction/theme status remains truthful.
+7. Exercise folder and optional `.petpack` import through T5 validation and
+   confirm it refreshes without auto-selection.
+8. Recheck ordinary Show/Hide, Reload, login/session preservation, drag, exact
+   Pet check state, and Exit.
+
+T12 release/CI work has not started.

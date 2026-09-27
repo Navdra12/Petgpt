@@ -35,6 +35,25 @@ public sealed class AppSettings
             StringComparer.Ordinal),
         SuspendHiddenBrowser = SuspendHiddenBrowser
     };
+
+    public void CopyFrom(AppSettings source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var copy = source.Copy();
+        SchemaVersion = copy.SchemaVersion;
+        SelectedPetId = copy.SelectedPetId;
+        SelectedPackVersions = copy.SelectedPackVersions;
+        ChatHomeUrl = copy.ChatHomeUrl;
+        PetPlacement = copy.PetPlacement;
+        ChatWindow = copy.ChatWindow;
+        CompactMode = copy.CompactMode;
+        ThemesEnabled = copy.ThemesEnabled;
+        Roleplay = copy.Roleplay;
+        ReactionsEnabled = copy.ReactionsEnabled;
+        ShowControlMarkers = copy.ShowControlMarkers;
+        PetOptions = copy.PetOptions;
+        SuspendHiddenBrowser = copy.SuspendHiddenBrowser;
+    }
 }
 
 public sealed class PetPlacementSettings

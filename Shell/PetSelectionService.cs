@@ -49,7 +49,7 @@ public sealed class PetSelectionService : IDisposable
 {
     private const int MaximumDiagnostics = 32;
 
-    private readonly IReadOnlyDictionary<(string Id, string Version), CharacterPack> _packs;
+    private readonly Dictionary<(string Id, string Version), CharacterPack> _packs;
     private readonly AppSettings _settings;
     private readonly Func<CharacterPack, CancellationToken, Task<PreparedPetSelection?>> _prepareAsync;
     private readonly Action<PreparedPetSelection> _applySelection;
@@ -76,6 +76,10 @@ public sealed class PetSelectionService : IDisposable
     public CharacterPack? CurrentPack { get; private set; }
     public string? CurrentPetId => CurrentPack?.Id;
     public string? CurrentVersion => CurrentPack?.Version;
+    public IReadOnlyList<CharacterPack> AvailablePacks => _packs.Values
+        .OrderBy(pack => pack.Id, StringComparer.Ordinal)
+        .ThenBy(pack => pack.Version, StringComparer.Ordinal)
+        .ToArray();
 
     public IReadOnlyList<string> DiagnosticCodes
     {
@@ -97,7 +101,7 @@ public sealed class PetSelectionService : IDisposable
 
             if (configured is not null)
             {
-                var configuredResult = await SelectCoreAsync(configured, token);
+                var configuredResult = await SelectCoreAsync(configured, token, updateSettings: true);
                 if (configuredResult.Succeeded)
                     return configuredResult;
                 if (configured.Id == "legacy")
@@ -114,7 +118,7 @@ public sealed class PetSelectionService : IDisposable
                 return PetSelectionResult.Failed("legacy_unavailable");
             }
 
-            var result = await SelectCoreAsync(legacy, token);
+            var result = await SelectCoreAsync(legacy, token, updateSettings: true);
             if (!result.Succeeded)
                 AddDiagnostic("legacy_unavailable");
             return result;
@@ -123,6 +127,13 @@ public sealed class PetSelectionService : IDisposable
     public Task<PetSelectionResult> SelectAsync(
         string petId,
         string version,
+        CancellationToken cancellationToken) =>
+        SelectAsync(petId, version, updateSettings: true, cancellationToken);
+
+    internal Task<PetSelectionResult> SelectAsync(
+        string petId,
+        string version,
+        bool updateSettings,
         CancellationToken cancellationToken) =>
         RunSerializedAsync(async token =>
         {
@@ -133,12 +144,71 @@ public sealed class PetSelectionService : IDisposable
                 return PetSelectionResult.Failed("selection_unknown");
             }
 
-            return await SelectCoreAsync(candidate, token);
+            return await SelectCoreAsync(candidate, token, updateSettings);
         }, cancellationToken);
+
+    public Task<PetSelectionResult> SelectByIdAsync(
+        string petId,
+        CancellationToken cancellationToken) =>
+        RunSerializedAsync(async token =>
+        {
+            if (string.IsNullOrWhiteSpace(petId))
+                return PetSelectionResult.Failed("selection_unknown");
+
+            var matches = _packs.Values
+                .Where(pack => pack.Id.Equals(petId, StringComparison.Ordinal))
+                .OrderBy(pack => pack.Version, StringComparer.Ordinal)
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                AddDiagnostic("selection_unknown");
+                return PetSelectionResult.Failed("selection_unknown");
+            }
+
+            CharacterPack candidate;
+            if (matches.Length == 1)
+            {
+                candidate = matches[0];
+            }
+            else if (_settings.SelectedPackVersions.TryGetValue(petId, out var configuredVersion) &&
+                matches.SingleOrDefault(pack => pack.Version.Equals(configuredVersion, StringComparison.Ordinal)) is { } configured)
+            {
+                candidate = configured;
+            }
+            else
+            {
+                AddDiagnostic("selection_ambiguous");
+                return PetSelectionResult.Failed("selection_ambiguous");
+            }
+
+            return await SelectCoreAsync(candidate, token, updateSettings: true);
+        }, cancellationToken);
+
+    public async Task RefreshAvailablePacksAsync(
+        IReadOnlyList<CharacterPack> packs,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(packs);
+        var replacement = packs.ToDictionary(pack => (pack.Id, pack.Version));
+        await _selectionGate.WaitAsync(cancellationToken);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            _packs.Clear();
+            foreach (var entry in replacement)
+                _packs.Add(entry.Key, entry.Value);
+        }
+        finally
+        {
+            _selectionGate.Release();
+        }
+    }
 
     private async Task<PetSelectionResult> SelectCoreAsync(
         CharacterPack candidate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool updateSettings)
     {
         if (CurrentPack is { } current &&
             current.Id.Equals(candidate.Id, StringComparison.Ordinal) &&
@@ -180,14 +250,17 @@ public sealed class PetSelectionService : IDisposable
             }
 
             CurrentPack = candidate;
-            var settingsChanged =
-                !_settings.SelectedPetId.Equals(candidate.Id, StringComparison.Ordinal) ||
-                !_settings.SelectedPackVersions.TryGetValue(candidate.Id, out var selectedVersion) ||
-                !selectedVersion.Equals(candidate.Version, StringComparison.Ordinal);
-            _settings.SelectedPetId = candidate.Id;
-            _settings.SelectedPackVersions[candidate.Id] = candidate.Version;
-            if (settingsChanged)
-                _requestSave(_settings);
+            if (updateSettings)
+            {
+                var settingsChanged =
+                    !_settings.SelectedPetId.Equals(candidate.Id, StringComparison.Ordinal) ||
+                    !_settings.SelectedPackVersions.TryGetValue(candidate.Id, out var selectedVersion) ||
+                    !selectedVersion.Equals(candidate.Version, StringComparison.Ordinal);
+                _settings.SelectedPetId = candidate.Id;
+                _settings.SelectedPackVersions[candidate.Id] = candidate.Version;
+                if (settingsChanged)
+                    _requestSave(_settings);
+            }
 
             RaiseSelectionChanged(candidate);
             return PetSelectionResult.Selected();

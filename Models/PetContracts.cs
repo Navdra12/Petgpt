@@ -144,6 +144,7 @@ public abstract record PetEvent
     public sealed record ValidatedReactionReceived(ValidatedReaction Reaction) : PetEvent;
     public sealed record ReactionDisplayed(string PlaybackKey) : PetEvent;
     public sealed record SleepChanged(bool IsSleeping) : PetEvent;
+    public sealed record ReducedMotionChanged(bool IsReducedMotion) : PetEvent;
     public sealed record PetChanged(CharacterPack Pack, bool ReducedMotion) : PetEvent;
     public sealed record RouteInvalidated() : PetEvent;
     public sealed record CancelCurrentActivity() : PetEvent;

@@ -61,15 +61,59 @@ public partial class PetWindow : Window
     internal System.Windows.Controls.Image AnimationSurface => PetImage;
     internal BitmapSource? CurrentFrame => PetImage.Source as BitmapSource;
 
-    internal void ApplySelection(PreparedPetSelection prepared)
+    internal void ApplySelection(PreparedPetSelection prepared, double scale = 1)
     {
         ArgumentNullException.ThrowIfNull(prepared);
-        var presentation = prepared.Pack.Presentation;
+        ApplyPresentation(prepared.Pack.Presentation, prepared.IdleImage, scale);
+    }
+
+    internal void ApplyScale(PetGPT.Characters.CharacterPack pack, double scale)
+    {
+        ArgumentNullException.ThrowIfNull(pack);
+        if (CurrentFrame is null)
+            throw new InvalidOperationException("The active pet has no prepared frame.");
+        ApplyPresentation(pack.Presentation, CurrentFrame, scale);
+    }
+
+    internal PetPlacementSettings ProjectPlacement(
+        PetGPT.Characters.CharacterPack pack,
+        double scale)
+    {
+        ArgumentNullException.ThrowIfNull(pack);
+        if (!_geometryReady)
+            return _settings.PetPlacement.Copy();
+
+        var scaled = PetScalePolicy.GetScaledSize(pack.Presentation, scale);
+        var targetRect = WindowPositionService.ResizeAroundAnchor(
+            WindowPositionService.GetWindowRectPx(this),
+            _presentationAnchorX,
+            _presentationAnchorY,
+            scaled,
+            pack.Presentation.AnchorX,
+            pack.Presentation.AnchorY,
+            _monitors);
+        var placement = WindowPositionService.CreatePlacement(targetRect, _monitors);
+        return new PetPlacementSettings
+        {
+            MonitorId = placement.MonitorId,
+            XWithinWorkAreaDip = placement.XWithinWorkAreaDip,
+            YWithinWorkAreaDip = placement.YWithinWorkAreaDip
+        };
+    }
+
+    private void ApplyPresentation(
+        PetGPT.Characters.CharacterPresentation presentation,
+        BitmapSource image,
+        double scale)
+    {
+        var scaled = PetScalePolicy.GetScaledSize(presentation, scale);
+        var width = scaled.Width;
+        var height = scaled.Height;
         if (!_geometryReady)
         {
-            Width = presentation.WidthDip;
-            Height = presentation.HeightDip;
-            PetImage.Source = prepared.IdleImage;
+            Width = width;
+            Height = height;
+            PetImage.Source = image;
             _presentationAnchorX = presentation.AnchorX;
             _presentationAnchorY = presentation.AnchorY;
             return;
@@ -86,7 +130,7 @@ public partial class PetWindow : Window
             previousRect,
             previousAnchorX,
             previousAnchorY,
-            new SizeDip(presentation.WidthDip, presentation.HeightDip),
+            new SizeDip(width, height),
             presentation.AnchorX,
             presentation.AnchorY,
             _monitors);
@@ -95,9 +139,9 @@ public partial class PetWindow : Window
         {
             _applyingPresentation = true;
             WindowPositionService.ResizeWindowToScreenRect(this, targetRect);
-            Width = presentation.WidthDip;
-            Height = presentation.HeightDip;
-            PetImage.Source = prepared.IdleImage;
+            Width = width;
+            Height = height;
+            PetImage.Source = image;
             _presentationAnchorX = presentation.AnchorX;
             _presentationAnchorY = presentation.AnchorY;
             UpdatePersistedPlacementWithoutSave();
@@ -369,5 +413,18 @@ internal sealed class PetInteractionEventGate
 
         IsDragging = false;
         return new PetEvent.DragEnded();
+    }
+}
+
+internal static class PetScalePolicy
+{
+    public static SizeDip GetScaledSize(
+        PetGPT.Characters.CharacterPresentation presentation,
+        double scale)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        if (!double.IsFinite(scale) || scale is < 0.5 or > 2.0)
+            throw new ArgumentOutOfRangeException(nameof(scale));
+        return new SizeDip(presentation.WidthDip * scale, presentation.HeightDip * scale);
     }
 }

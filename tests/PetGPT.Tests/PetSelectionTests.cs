@@ -11,6 +11,85 @@ namespace PetGPT.Tests;
 public sealed class PetSelectionTests
 {
     [Fact]
+    public async Task SelectById_OneInstalledVersionSelectsThatExactPack()
+    {
+        var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);
+        var alpha = Pack("alpha", "2.0.0");
+        var settings = Settings("legacy", ("legacy", "1.0.0"));
+        using var harness = new SelectionHarness([legacy, alpha], settings);
+        await harness.Service.InitializeAsync(CancellationToken.None);
+
+        var result = await harness.Service.SelectByIdAsync("alpha", CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Same(alpha, harness.Service.CurrentPack);
+    }
+
+    [Fact]
+    public async Task SelectById_MultipleVersionsNeverChooseImplicitLatest()
+    {
+        var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);
+        var alpha1 = Pack("alpha", "1.0.0");
+        var alpha2 = Pack("alpha", "2.0.0");
+        var settings = Settings("legacy", ("legacy", "1.0.0"));
+        using var harness = new SelectionHarness([legacy, alpha1, alpha2], settings);
+        await harness.Service.InitializeAsync(CancellationToken.None);
+
+        var result = await harness.Service.SelectByIdAsync("alpha", CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("selection_ambiguous", result.DiagnosticCode);
+        Assert.Same(legacy, harness.Service.CurrentPack);
+    }
+
+    [Fact]
+    public async Task SelectById_MultipleVersionsUsesAlreadyConfiguredExactVersion()
+    {
+        var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);
+        var alpha1 = Pack("alpha", "1.0.0");
+        var alpha2 = Pack("alpha", "2.0.0");
+        var settings = Settings("legacy", ("legacy", "1.0.0"), ("alpha", "1.0.0"));
+        using var harness = new SelectionHarness([legacy, alpha1, alpha2], settings);
+        await harness.Service.InitializeAsync(CancellationToken.None);
+
+        var result = await harness.Service.SelectByIdAsync("alpha", CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Same(alpha1, harness.Service.CurrentPack);
+    }
+
+    [Fact]
+    public async Task SelectById_InvalidIdLeavesCurrentSelectionUnchanged()
+    {
+        var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);
+        var settings = Settings("legacy", ("legacy", "1.0.0"));
+        using var harness = new SelectionHarness([legacy], settings);
+        await harness.Service.InitializeAsync(CancellationToken.None);
+
+        var result = await harness.Service.SelectByIdAsync("missing", CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Same(legacy, harness.Service.CurrentPack);
+    }
+
+    [Fact]
+    public async Task CatalogRefreshAddsImportedPackWithoutAutoSelectingIt()
+    {
+        var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);
+        var imported = Pack("alpha", "1.0.0");
+        var settings = Settings("legacy", ("legacy", "1.0.0"));
+        using var harness = new SelectionHarness([legacy], settings);
+        await harness.Service.InitializeAsync(CancellationToken.None);
+        var savesBeforeRefresh = harness.SaveCount;
+
+        await harness.Service.RefreshAvailablePacksAsync([legacy, imported], CancellationToken.None);
+
+        Assert.Same(legacy, harness.Service.CurrentPack);
+        Assert.Equal(2, harness.Service.AvailablePacks.Count);
+        Assert.Equal(savesBeforeRefresh, harness.SaveCount);
+    }
+
+    [Fact]
     public async Task Startup_SelectsExactConfiguredIdAndVersion()
     {
         var legacy = Pack("legacy", "1.0.0", CharacterPackSource.Bundled);

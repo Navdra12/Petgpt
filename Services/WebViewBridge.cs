@@ -125,6 +125,9 @@ public sealed class WebViewBridge : IDisposable
         ResetStatus();
     }
 
+    public void CancelPendingStage() =>
+        CompleteCurrentStage(StagePersonaResult.Unsupported);
+
     public Task<StagePersonaResult> StagePersonaAsync(
         PersonaContext context,
         Action<string> postMessage,

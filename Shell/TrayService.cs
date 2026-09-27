@@ -14,12 +14,17 @@ public sealed class TrayService : IDisposable
     private readonly Action _exit;
     private readonly Func<NavigationIntent, Task<NavigationResult>> _navigateAsync;
     private readonly Func<string, string, Task<PetSelectionResult>> _selectPetAsync;
+    private readonly Action _commands;
+    private readonly Action _settings;
     private readonly Forms.ContextMenuStrip _menu;
     private readonly Forms.ToolStripMenuItem _showHideChat;
     private readonly Forms.ToolStripMenuItem _newPetChat;
     private readonly Forms.ToolStripMenuItem _history;
+    private readonly Forms.ToolStripMenuItem _petMenu;
+    private readonly Forms.ToolStripMenuItem _commandsItem;
+    private readonly Forms.ToolStripMenuItem _settingsItem;
     private readonly Forms.NotifyIcon _notifyIcon;
-    private readonly TrayPetMenuState _petMenuState;
+    private TrayPetMenuState _petMenuState;
     private readonly Dictionary<(string Id, string Version), Forms.ToolStripMenuItem> _petItems = [];
     private readonly OwnedResourceSlot<DrawingIcon> _iconSlot;
     private bool _disposed;
@@ -30,12 +35,16 @@ public sealed class TrayService : IDisposable
         IReadOnlyList<CharacterPack> packs,
         Func<string, string, Task<PetSelectionResult>> selectPetAsync,
         Func<NavigationIntent, Task<NavigationResult>> navigateAsync,
-        bool hasConfiguredPetChatsHome)
+        bool hasConfiguredPetChatsHome,
+        Action commands,
+        Action settings)
     {
         _toggleChat = toggleChat ?? throw new ArgumentNullException(nameof(toggleChat));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
         _selectPetAsync = selectPetAsync ?? throw new ArgumentNullException(nameof(selectPetAsync));
         _navigateAsync = navigateAsync ?? throw new ArgumentNullException(nameof(navigateAsync));
+        _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _petMenuState = new TrayPetMenuState(packs ?? throw new ArgumentNullException(nameof(packs)));
         _iconSlot = new OwnedResourceSlot<DrawingIcon>(LoadFallbackIcon());
 
@@ -54,14 +63,20 @@ public sealed class TrayService : IDisposable
             Enabled = hasConfiguredPetChatsHome
         };
         _history.Click += OnHistory;
+        _petMenu = CreatePetMenu();
+        _commandsItem = new Forms.ToolStripMenuItem("PetGPT Commands");
+        _commandsItem.Click += OnCommands;
+        _settingsItem = new Forms.ToolStripMenuItem("Settings");
+        _settingsItem.Click += OnSettings;
 
         _menu = new Forms.ContextMenuStrip();
         _menu.Items.Add(_showHideChat);
         _menu.Items.Add(new Forms.ToolStripSeparator());
         _menu.Items.Add(_newPetChat);
         _menu.Items.Add(_history);
-        _menu.Items.Add(CreatePetMenu());
-        _menu.Items.Add(CreateUnavailableItem("Settings — unavailable"));
+        _menu.Items.Add(_petMenu);
+        _menu.Items.Add(_commandsItem);
+        _menu.Items.Add(_settingsItem);
         _menu.Items.Add(new Forms.ToolStripSeparator());
 
         var exitItem = new Forms.ToolStripMenuItem("Exit PetGPT");
@@ -82,6 +97,32 @@ public sealed class TrayService : IDisposable
     {
         if (!_disposed)
             _showHideChat.Text = visible ? "Hide ChatGPT" : "Show ChatGPT";
+    }
+
+    public void SetPetChatsConfigured(bool configured)
+    {
+        if (_disposed)
+            return;
+        _newPetChat.Enabled = configured;
+        _history.Enabled = configured;
+        _newPetChat.Text = configured ? "New PetChat" : "New PetChat — PetChats not configured";
+        _history.Text = configured ? "History" : "History — PetChats not configured";
+    }
+
+    public void RefreshPacks(
+        IReadOnlyList<CharacterPack> packs,
+        string? selectedId,
+        string? selectedVersion)
+    {
+        if (_disposed)
+            return;
+        foreach (var item in _petItems.Values)
+            item.Click -= OnSelectPet;
+        _petItems.Clear();
+        _petMenu.DropDownItems.Clear();
+        _petMenuState = new TrayPetMenuState(packs);
+        _petMenuState.CommitSelection(selectedId ?? string.Empty, selectedVersion ?? string.Empty);
+        PopulatePetMenu(_petMenu);
     }
 
     internal void ApplySelection(CharacterPack pack, DrawingIcon preparedIcon)
@@ -118,6 +159,8 @@ public sealed class TrayService : IDisposable
         _showHideChat.Click -= OnToggleChat;
         _newPetChat.Click -= OnNewPetChat;
         _history.Click -= OnHistory;
+        _commandsItem.Click -= OnCommands;
+        _settingsItem.Click -= OnSettings;
         foreach (var item in _petItems.Values)
             item.Click -= OnSelectPet;
         _notifyIcon.Dispose();
@@ -128,11 +171,19 @@ public sealed class TrayService : IDisposable
     private Forms.ToolStripMenuItem CreatePetMenu()
     {
         var menu = new Forms.ToolStripMenuItem("Pet");
+        PopulatePetMenu(menu);
+        return menu;
+    }
+
+    private void PopulatePetMenu(Forms.ToolStripMenuItem menu)
+    {
         if (_petMenuState.Entries.Count == 0)
         {
             menu.Enabled = false;
-            return menu;
+            return;
         }
+
+        menu.Enabled = true;
 
         foreach (var entry in _petMenuState.Entries)
         {
@@ -146,8 +197,6 @@ public sealed class TrayService : IDisposable
             menu.DropDownItems.Add(item);
             _petItems.Add((entry.Pack.Id, entry.Pack.Version), item);
         }
-
-        return menu;
     }
 
     private async void OnSelectPet(object? sender, EventArgs e)
@@ -166,6 +215,10 @@ public sealed class TrayService : IDisposable
     }
 
     private void OnToggleChat(object? sender, EventArgs e) => _toggleChat();
+
+    private void OnCommands(object? sender, EventArgs e) => _commands();
+
+    private void OnSettings(object? sender, EventArgs e) => _settings();
 
     private async void OnNewPetChat(object? sender, EventArgs e)
     {
@@ -196,9 +249,6 @@ public sealed class TrayService : IDisposable
     }
 
     private void OnExit(object? sender, EventArgs e) => _exit();
-
-    private static Forms.ToolStripMenuItem CreateUnavailableItem(string text) =>
-        new(text) { Enabled = false };
 
     internal static DrawingIcon LoadFallbackIcon()
     {

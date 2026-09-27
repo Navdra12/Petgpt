@@ -28,14 +28,42 @@ input for rollback compatibility.
 To clear the embedded ChatGPT session, close PetGPT and delete the WebView2
 folder.
 
-## Replace the pet
-Replace `Assets/pet-placeholder.png` or change the image source in
-`Windows/PetWindow.xaml`.
+## Local PetGPT commands
+
+Use the `/` button in the PetGPT chat title bar, the **PetGPT Commands** tray
+entry, or `Ctrl+/` while the native bubble has keyboard focus. This opens a
+separate native command window. Commands entered there stay local and are never
+sent to ChatGPT.
+
+Supported commands are `/pet`, `/pet list`, `/pet <id>`, `/pet sleep`,
+`/pet wake`, `/theme`, `/history`, and `/new`. Shell syntax, chaining, paths,
+multiline input, and unknown commands are rejected locally.
+
+Slash-looking text typed in ChatGPT's own composer is an ordinary ChatGPT
+message. PetGPT does not intercept, read, or replace the website composer.
+
+## Settings and character packs
+
+Open **Settings** from the tray or the gear button in the chat title bar.
+Changes are edited in a detached working copy: **Cancel** or closing the window
+does not apply them, while **Apply** validates the complete snapshot, updates
+supported runtime behavior, and flushes it to settings v2.
+
+Settings includes the PetChats project landing URL, manual Project Instructions
+copy, exact character/version choice, compact/theme preferences, per-character
+scale and reduced motion, roleplay/reaction preferences, control-marker
+visibility, and FollowPet/Free placement. Hidden-browser suspension is shown as
+unavailable because it is not safely supported yet.
+
+Import a data-only character pack from the Character tab by choosing either a
+pack folder or a `.petpack` archive. Imports use the same bounded T5 validation
+and install below `%LOCALAPPDATA%\PetGPT\Pets\<id>\<version>`. A successful
+import refreshes the chooser and tray but is not selected automatically.
 
 ## Compact mode
-Edit:
-- `Web/compact-chatgpt.css`
-- `Web/compact-chatgpt.js`
+
+Compact mode can be toggled live from Settings. Its bundled implementation is
+in `Web/compact-chatgpt.css` and `Web/compact-chatgpt.js`.
 
 ## Known limitations
 - The T0 baseline restore, build, and process-launch checks passed on Windows 11;

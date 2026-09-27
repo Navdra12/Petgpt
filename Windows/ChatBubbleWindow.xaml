@@ -55,11 +55,15 @@
                     <Button x:Name="HistoryButton"
                             Content="History" Width="54" BorderThickness="0"
                             ToolTip="PetChats history" Click="OnHistory"/>
-                    <Button Content="↗" Width="36" BorderThickness="0"
+                    <Button Content="/" Width="32" BorderThickness="0"
+                            ToolTip="Local PetGPT commands (Ctrl+/)" Click="OnCommands"/>
+                    <Button Content="⚙" Width="32" BorderThickness="0"
+                            ToolTip="PetGPT Settings" Click="OnSettings"/>
+                    <Button Content="↗" Width="32" BorderThickness="0"
                             ToolTip="Open in browser" Click="OnOpenBrowser"/>
-                    <Button Content="↻" Width="36" BorderThickness="0"
+                    <Button Content="↻" Width="32" BorderThickness="0"
                             ToolTip="Reload" Click="OnReload"/>
-                    <Button Content="×" Width="36" BorderThickness="0"
+                    <Button Content="×" Width="32" BorderThickness="0"
                             ToolTip="Close" Click="OnClose"/>
                 </StackPanel>
             </Grid>

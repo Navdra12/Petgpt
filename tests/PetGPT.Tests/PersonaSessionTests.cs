@@ -751,6 +751,20 @@ public sealed class PersonaSessionTests
     }
 
     [Fact]
+    public async Task Bridge_ExplicitRoleplayDisableCancelsOutstandingStage()
+    {
+        using var bridge = ReadyEmptyBridge();
+        var pending = bridge.StagePersonaAsync(
+            new PersonaAssembler().Build(Pack(), "0011223344556677"),
+            _ => { },
+            CancellationToken.None);
+
+        bridge.CancelPendingStage();
+
+        Assert.Equal(StagePersonaResult.Unsupported, await pending);
+    }
+
+    [Fact]
     public async Task Bridge_GenerationStartingCancelsOutstandingStage()
     {
         using var bridge = ReadyEmptyBridge();

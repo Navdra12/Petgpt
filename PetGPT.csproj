@@ -24,6 +24,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\petgpt-fallback.ico" />
+    <EmbeddedResource Include="docs\pet-chats-project-instructions.md"
+                      LogicalName="PetGPT.ProjectInstructions.md" />
     <Content Include="Assets\pet-placeholder.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

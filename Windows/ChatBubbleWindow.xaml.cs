@@ -26,6 +26,8 @@ public partial class ChatBubbleWindow : Window
     private readonly ReactionLiveTurnCoordinator _reactionCoordinator = new();
     private readonly Action<PetEvent> _petEvent;
     private readonly Action _exitRequested;
+    private readonly Action _commandsRequested;
+    private readonly Action _settingsRequested;
     private readonly double _normalMinWidthDip;
     private readonly double _normalMinHeightDip;
     private IReadOnlyList<MonitorInfo> _monitors = [];
@@ -42,7 +44,9 @@ public partial class ChatBubbleWindow : Window
         Window pet,
         PersonaSession personaSession,
         Action<PetEvent> petEvent,
-        Action exitRequested)
+        Action exitRequested,
+        Action commandsRequested,
+        Action settingsRequested)
     {
         InitializeComponent();
 
@@ -52,6 +56,8 @@ public partial class ChatBubbleWindow : Window
         _personaSession = personaSession ?? throw new ArgumentNullException(nameof(personaSession));
         _petEvent = petEvent ?? throw new ArgumentNullException(nameof(petEvent));
         _exitRequested = exitRequested;
+        _commandsRequested = commandsRequested ?? throw new ArgumentNullException(nameof(commandsRequested));
+        _settingsRequested = settingsRequested ?? throw new ArgumentNullException(nameof(settingsRequested));
         _normalMinWidthDip = MinWidth;
         _normalMinHeightDip = MinHeight;
 
@@ -95,6 +101,101 @@ public partial class ChatBubbleWindow : Window
     }
 
     public bool HasConfiguredPetChatsHome => _navigationService.HasConfiguredHome;
+
+    public void PrepareRuntimeSettingsCandidate(AppSettings candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        var wasFollowing = _settings.ChatWindow.PlacementMode == "FollowPet";
+        if (!_geometryReady || candidate.ChatWindow.PlacementMode != "Free" || !wasFollowing ||
+            candidate.ChatWindow.XWithinWorkAreaDip.HasValue &&
+            candidate.ChatWindow.YWithinWorkAreaDip.HasValue)
+        {
+            return;
+        }
+
+        var placement = WindowPositionService.CapturePlacement(this, _monitors);
+        candidate.ChatWindow.MonitorId = placement.MonitorId;
+        candidate.ChatWindow.XWithinWorkAreaDip = placement.XWithinWorkAreaDip;
+        candidate.ChatWindow.YWithinWorkAreaDip = placement.YWithinWorkAreaDip;
+    }
+
+    public bool ApplyRuntimePreferencesAndGeometry(AppSettings candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (!_navigationService.ReconfigureHome(candidate.ChatHomeUrl) ||
+            !_chatService.ReconfigureHome(candidate.ChatHomeUrl))
+        {
+            return false;
+        }
+
+        _chatService.UpdateRuntimePreferences(
+            candidate.CompactMode,
+            candidate.ThemesEnabled,
+            candidate.ReactionsEnabled,
+            candidate.ShowControlMarkers);
+        _chatService.SetSelectedTheme(candidate.ThemesEnabled ? _selectedPack?.Theme : null);
+
+        if (_geometryReady)
+        {
+            var previousRect = WindowPositionService.GetWindowRectPx(this);
+            try
+            {
+                ApplyGeometry(() =>
+                    WindowPositionService.PositionBubble(this, _pet, candidate.ChatWindow, _monitors));
+            }
+            catch
+            {
+                try
+                {
+                    WindowPositionService.ResizeWindowToScreenRect(this, previousRect);
+                }
+                catch
+                {
+                    // Preserve the failed preview result; normal ChatGPT remains usable.
+                }
+                return false;
+            }
+        }
+
+        var configured = _navigationService.HasConfiguredHome;
+        NewPetChatButton.IsEnabled = configured;
+        HistoryButton.IsEnabled = configured;
+        PetChatsStatusText.Text = configured ? string.Empty : "PetChats not configured";
+        return true;
+    }
+
+    public void CommitRuntimeIdentity(AppSettings previous, AppSettings candidate)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        ArgumentNullException.ThrowIfNull(candidate);
+        var disablingRoleplay = previous.Roleplay.Enabled && !candidate.Roleplay.Enabled;
+        var disablingReactions = previous.ReactionsEnabled && !candidate.ReactionsEnabled;
+        if (disablingRoleplay)
+        {
+            try
+            {
+                _chatService.CancelPersonaStaging();
+            }
+            catch
+            {
+                // Staging cancellation is best effort during document teardown.
+            }
+        }
+        _personaSession.UpdateRoleplay(candidate.Roleplay.Enabled, candidate.Roleplay.ActivationMode);
+        if (disablingReactions)
+        {
+            _reactionCoordinator.Invalidate();
+            try
+            {
+                _petEvent(new PetEvent.CancelCurrentActivity());
+            }
+            catch
+            {
+                // Animation cancellation is cosmetic; correlation is already invalidated.
+            }
+        }
+        RefreshPersonaUi();
+    }
 
     public void ApplySelectedPack(CharacterPack pack)
     {
@@ -250,9 +351,20 @@ public partial class ChatBubbleWindow : Window
 
     private void OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (!_appShuttingDown && e.Key == Key.Escape)
+        if (_appShuttingDown)
+            return;
+        if (e.Key == Key.Escape)
             Hide();
+        else if (e.Key == Key.Oem2 && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            e.Handled = true;
+            _commandsRequested();
+        }
     }
+
+    private void OnCommands(object sender, RoutedEventArgs e) => _commandsRequested();
+
+    private void OnSettings(object sender, RoutedEventArgs e) => _settingsRequested();
 
     private void OnOpenBrowser(object sender, RoutedEventArgs e)
     {

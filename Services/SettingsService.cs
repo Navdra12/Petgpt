@@ -7,6 +7,10 @@ using PetGPT.Models;
 
 namespace PetGPT.Services;
 
+public sealed record SettingsValidationResult(bool Succeeded, AppSettings? Snapshot, string? DiagnosticCode);
+
+public sealed record SettingsPersistenceResult(bool Succeeded, string? DiagnosticCode);
+
 public sealed class SettingsService
 {
     private const int MaximumFileBytes = 256 * 1024;
@@ -28,6 +32,7 @@ public sealed class SettingsService
     private readonly string _v2Path;
     private readonly string _backupPath;
     private readonly TimeSpan _debounceDelay;
+    private readonly Func<CancellationToken, Task> _beforeImmediateWriteAsync;
     private AppSettings? _pendingSnapshot;
     private CancellationTokenSource? _debounceCancellation;
     private bool _readOnlyRecovery;
@@ -42,6 +47,14 @@ public sealed class SettingsService
     }
 
     internal SettingsService(string settingsDirectory, TimeSpan debounceDelay)
+        : this(settingsDirectory, debounceDelay, _ => Task.CompletedTask)
+    {
+    }
+
+    internal SettingsService(
+        string settingsDirectory,
+        TimeSpan debounceDelay,
+        Func<CancellationToken, Task> beforeImmediateWriteAsync)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(settingsDirectory);
         ArgumentOutOfRangeException.ThrowIfLessThan(debounceDelay, TimeSpan.Zero);
@@ -51,6 +64,8 @@ public sealed class SettingsService
         _v2Path = Path.Combine(_settingsDirectory, "settings.v2.json");
         _backupPath = Path.Combine(_settingsDirectory, "settings.v2.last-good.json");
         _debounceDelay = debounceDelay;
+        _beforeImmediateWriteAsync = beforeImmediateWriteAsync ??
+            throw new ArgumentNullException(nameof(beforeImmediateWriteAsync));
     }
 
     public IReadOnlyList<string> DiagnosticCodes
@@ -156,6 +171,89 @@ public sealed class SettingsService
         }
 
         _ = DebounceAndWriteAsync(cancellationToken);
+    }
+
+    public SettingsValidationResult ValidateCandidate(AppSettings snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        try
+        {
+            var copy = snapshot.Copy();
+            Validate(copy);
+            return new SettingsValidationResult(true, copy, null);
+        }
+        catch (SettingsFormatException exception)
+        {
+            return new SettingsValidationResult(false, null, exception.Code);
+        }
+        catch
+        {
+            return new SettingsValidationResult(false, null, "snapshot_invalid");
+        }
+    }
+
+    public async Task<SettingsPersistenceResult> SaveImmediateAsync(
+        AppSettings snapshot,
+        CancellationToken cancellationToken)
+    {
+        var validation = ValidateCandidate(snapshot);
+        if (!validation.Succeeded || validation.Snapshot is null)
+            return new SettingsPersistenceResult(false, validation.DiagnosticCode ?? "snapshot_invalid");
+
+        CancellationTokenSource? debounceCancellation;
+        AppSettings? previousPending;
+        lock (_stateGate)
+        {
+            if (_readOnlyRecovery)
+            {
+                AddDiagnosticLocked("read_only");
+                return new SettingsPersistenceResult(false, "read_only");
+            }
+
+            previousPending = _pendingSnapshot;
+            _pendingSnapshot = null;
+            debounceCancellation = _debounceCancellation;
+            _debounceCancellation = null;
+        }
+
+        debounceCancellation?.Cancel();
+        debounceCancellation?.Dispose();
+
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _beforeImmediateWriteAsync(cancellationToken).ConfigureAwait(false);
+            await WriteAtomicAsync(validation.Snapshot, cancellationToken).ConfigureAwait(false);
+            return new SettingsPersistenceResult(true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            RestorePendingAfterImmediateFailure(previousPending);
+            throw;
+        }
+        catch
+        {
+            AddDiagnostic("write_failed");
+            RestorePendingAfterImmediateFailure(previousPending);
+            return new SettingsPersistenceResult(false, "write_failed");
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    private void RestorePendingAfterImmediateFailure(AppSettings? previousPending)
+    {
+        CancellationTokenSource? queuedCancellation;
+        lock (_stateGate)
+        {
+            queuedCancellation = _debounceCancellation;
+            _debounceCancellation = null;
+            _pendingSnapshot = previousPending;
+        }
+        queuedCancellation?.Cancel();
+        queuedCancellation?.Dispose();
     }
 
     public async Task FlushAsync(CancellationToken cancellationToken)

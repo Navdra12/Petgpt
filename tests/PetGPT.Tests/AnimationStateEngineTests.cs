@@ -493,6 +493,26 @@ public sealed class AnimationStateEngineTests
     }
 
     [Fact]
+    public void ReducedMotionLiveTogglePreservesSemanticStateAndReactionLease()
+    {
+        var engine = Engine();
+        var pending = Apply(engine, T(0), new PetEvent.ValidatedReactionReceived(Reaction("spark", 1, 1)));
+        var playing = Apply(engine, T(0.1), new PetEvent.ReactionDisplayed(pending.PlaybackKey));
+
+        var reduced = Apply(engine, T(0.5), new PetEvent.ReducedMotionChanged(true));
+        var restored = Apply(engine, T(0.75), new PetEvent.ReducedMotionChanged(false));
+
+        Assert.Equal(PetVisualState.Reaction, reduced.State);
+        Assert.Equal(ReactionLane.Playing, reduced.ReactionLane);
+        Assert.True(reduced.ReducedMotion);
+        Assert.Equal(playing.PlaybackKey, reduced.PlaybackKey);
+        Assert.Equal(playing.LeaseDeadline, reduced.LeaseDeadline);
+        Assert.False(restored.ReducedMotion);
+        Assert.Equal(playing.PlaybackKey, restored.PlaybackKey);
+        Assert.Equal(playing.LeaseDeadline, restored.LeaseDeadline);
+    }
+
+    [Fact]
     public void StaticClipRequiresNoMovingFrameTimer()
     {
         var decision = Engine().Current(T(0));
@@ -567,6 +587,24 @@ public sealed class AnimationStateEngineTests
 
         Assert.Equal(0, player.CachedClipCount);
         Assert.False(scheduler.IsScheduled);
+    }
+
+    [Fact]
+    public void PlayerReducedMotionLiveToggleStopsAndRestoresMovingFrameScheduling()
+    {
+        var scheduler = new FakeScheduler();
+        using var player = Player(scheduler, () => T(0), _ => { });
+        var pack = Pack();
+        player.InstallPack(pack, Pixel(), false);
+        player.SetVisible(true);
+        player.Apply(Apply(new AnimationStateEngine(pack, false), T(0), new PetEvent.HoverEntered()));
+        Assert.True(scheduler.IsScheduled);
+
+        player.SetReducedMotion(true);
+        Assert.False(scheduler.IsScheduled);
+
+        player.SetReducedMotion(false);
+        Assert.True(scheduler.IsScheduled);
     }
 
     [Fact]

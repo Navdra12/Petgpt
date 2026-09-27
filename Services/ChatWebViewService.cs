@@ -134,6 +134,22 @@ public sealed class ChatWebViewService
         _ = ApplyAppearanceSafelyAsync();
     }
 
+    public bool ReconfigureHome(string? configuredHome) =>
+        _navigationState.ReconfigureHome(configuredHome);
+
+    public void UpdateRuntimePreferences(
+        bool compactMode,
+        bool themesEnabled,
+        bool reactionsEnabled,
+        bool showControlMarkers)
+    {
+        _compactMode = compactMode;
+        _themesEnabled = themesEnabled;
+        _reactionsEnabled = reactionsEnabled;
+        _showControlMarkers = showControlMarkers;
+        _ = ApplyAppearanceSafelyAsync();
+    }
+
     public bool Navigate(Uri target)
     {
         if (!_lifecycle.CanUseBrowser ||
@@ -165,6 +181,8 @@ public sealed class ChatWebViewService
                 _bridge.ComposerDraftState,
                 _bridge.GenerationState);
     }
+
+    public void CancelPersonaStaging() => _bridge.CancelPendingStage();
 
     public Task<StagePersonaResult> StagePersonaAsync(
         PersonaContext context,

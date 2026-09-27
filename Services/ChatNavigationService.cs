@@ -124,11 +124,19 @@ internal sealed class ChatWebViewNavigationState
         InitialNavigationUri = ChatNavigationUrlPolicy.ResolveInitialNavigation(configuredHome);
     }
 
-    public Uri InitialNavigationUri { get; }
+    public Uri InitialNavigationUri { get; private set; }
     public Uri? CurrentUri { get; private set; }
     public Uri? ReloadUri => CurrentUri;
 
     public void ObserveSource(Uri? source) => CurrentUri = source;
+
+    public bool ReconfigureHome(string? configuredHome)
+    {
+        if (configuredHome is not null && !ChatNavigationUrlPolicy.TryValidateHome(configuredHome, out _))
+            return false;
+        InitialNavigationUri = ChatNavigationUrlPolicy.ResolveInitialNavigation(configuredHome);
+        return true;
+    }
 
     public void OnVisibilityChanged(bool visible)
     {
@@ -138,7 +146,7 @@ internal sealed class ChatWebViewNavigationState
 
 public sealed class ChatNavigationService
 {
-    private readonly Uri? _homeUri;
+    private Uri? _homeUri;
     private readonly Func<Uri?> _getCurrentUri;
     private readonly Action<Uri> _navigate;
     private readonly Func<CancellationToken, Task<bool>> _confirmLeaveAsync;
@@ -162,6 +170,20 @@ public sealed class ChatNavigationService
     public Uri InitialNavigationUri => _homeUri ?? ChatNavigationUrlPolicy.RootUri;
     public ChatRouteKind CurrentRoute { get; private set; } = ChatRouteKind.Unrelated;
     public bool HistoryMode { get; private set; }
+
+    public bool ReconfigureHome(string? configuredHome)
+    {
+        if (configuredHome is null)
+        {
+            _homeUri = null;
+            HistoryMode = false;
+            return true;
+        }
+        if (!ChatNavigationUrlPolicy.TryValidateHome(configuredHome, out var home))
+            return false;
+        _homeUri = home;
+        return true;
+    }
 
     public void ObserveSource(Uri? source)
     {

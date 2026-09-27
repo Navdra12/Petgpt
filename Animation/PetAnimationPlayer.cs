@@ -110,6 +110,22 @@ public sealed class PetAnimationPlayer : IDisposable
         }
     }
 
+    public void SetReducedMotion(bool reducedMotion)
+    {
+        if (_disposed || _reducedMotion == reducedMotion)
+            return;
+
+        _reducedMotion = reducedMotion;
+        if (_decision is null)
+            return;
+
+        _decision = _decision with { ReducedMotion = reducedMotion };
+        if (_visible)
+            RenderAndSchedule();
+        else
+            _scheduler.Stop();
+    }
+
     public void Apply(PlaybackDecision decision)
     {
         ArgumentNullException.ThrowIfNull(decision);

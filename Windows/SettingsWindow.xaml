@@ -1,0 +1,94 @@
+<Window x:Class="PetGPT.Windows.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PetGPT Settings"
+        Width="620" Height="690"
+        MinWidth="520" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        KeyDown="OnWindowKeyDown">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TabControl x:Name="SettingsTabs">
+            <TabItem x:Name="PetChatsTab" Header="PetChats">
+                <StackPanel Margin="14">
+                    <TextBlock Text="ChatGPT Project landing URL" FontWeight="SemiBold"/>
+                    <TextBox x:Name="HomeUrlTextBox" Margin="0,6,0,4"/>
+                    <TextBlock x:Name="HomeStatusText" Foreground="#666" TextWrapping="Wrap"/>
+                    <Button Content="Copy PetChats Project Instructions"
+                            HorizontalAlignment="Left" Margin="0,18,0,6" Padding="12,6"
+                            Click="OnCopyProjectInstructions"/>
+                    <TextBlock x:Name="CopyStatusText" Foreground="#666" TextWrapping="Wrap"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="CharacterTab" Header="Character">
+                <StackPanel Margin="14">
+                    <TextBlock Text="Installed character and exact version" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="CharacterComboBox" Margin="0,6,0,10"
+                              SelectionChanged="OnCharacterSelectionChanged"/>
+                    <TextBlock x:Name="SelectedCharacterText" Foreground="#666"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,18,0,8">
+                        <Button Content="Import folder" Padding="12,6" Margin="0,0,8,0" Click="OnImportFolder"/>
+                        <Button Content="Import .petpack" Padding="12,6" Click="OnImportArchive"/>
+                    </StackPanel>
+                    <TextBlock x:Name="ImportStatusText" Foreground="#666" TextWrapping="Wrap"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="AppearanceTab" Header="Appearance">
+                <StackPanel Margin="14">
+                    <CheckBox x:Name="CompactModeCheckBox" Content="Compact ChatGPT appearance" Margin="0,0,0,10"/>
+                    <CheckBox x:Name="ThemesEnabledCheckBox" Content="Enable selected character theme" Margin="0,0,0,18"/>
+                    <TextBlock Text="Selected character scale (0.5–2.0)" FontWeight="SemiBold"/>
+                    <TextBox x:Name="ScaleTextBox" Width="100" HorizontalAlignment="Left" Margin="0,6,0,12"/>
+                    <CheckBox x:Name="ReducedMotionCheckBox" Content="Reduced motion"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="RoleplayTab" Header="Roleplay">
+                <StackPanel Margin="14">
+                    <CheckBox x:Name="RoleplayEnabledCheckBox" Content="Enable roleplay for supported characters" Margin="0,0,0,10"/>
+                    <TextBlock Text="Activation mode: ReviewThenSend" Margin="20,0,0,18" Foreground="#666"/>
+                    <CheckBox x:Name="ReactionsEnabledCheckBox" Content="Enable character reaction markers" Margin="0,0,0,10"/>
+                    <CheckBox x:Name="ShowControlMarkersCheckBox" Content="Show supported control markers in ChatGPT"/>
+                    <TextBlock x:Name="RoleplayAvailabilityText" Margin="0,16,0,0" Foreground="#666" TextWrapping="Wrap"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="PlacementTab" Header="Placement">
+                <StackPanel Margin="14">
+                    <TextBlock Text="Chat placement" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="PlacementComboBox" Width="180" HorizontalAlignment="Left" Margin="0,6,0,10">
+                        <ComboBoxItem Content="FollowPet"/>
+                        <ComboBoxItem Content="Free"/>
+                    </ComboBox>
+                    <TextBlock Text="Free placement coordinates are preserved when switching modes." Foreground="#666" TextWrapping="Wrap"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="AdvancedTab" Header="Advanced">
+                <StackPanel Margin="14">
+                    <CheckBox x:Name="SuspendHiddenBrowserCheckBox"
+                              Content="Suspend hidden browser (unavailable)"
+                              IsEnabled="False"/>
+                    <TextBlock Margin="0,10,0,0" Foreground="#666" TextWrapping="Wrap"
+                               Text="Browser suspension remains disabled because safe voice/media activity detection is not implemented."/>
+                </StackPanel>
+            </TabItem>
+            <TabItem x:Name="DiagnosticsTab" Header="Diagnostics">
+                <TextBox x:Name="DiagnosticsTextBox" Margin="14" IsReadOnly="True"
+                         TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+            </TabItem>
+        </TabControl>
+        <Grid Grid.Row="1" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="ApplyStatusText" VerticalAlignment="Center" Foreground="#666" TextWrapping="Wrap"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="ApplyButton" Content="Apply" Padding="18,7" Margin="0,0,8,0" IsDefault="True" Click="OnApply"/>
+                <Button Content="Cancel" Padding="18,7" IsCancel="True" Click="OnCancel"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
